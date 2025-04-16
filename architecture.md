@@ -59,6 +59,7 @@
 ---
 
 ## 🗂️ 아키텍처 다이어그램
+<img width="531" alt="스크린샷 2025-04-17 오전 3 59 07" src="https://github.com/user-attachments/assets/f81819dc-5246-43ed-9cc7-29148a134aa9" />
 
 ---
 
