@@ -1,0 +1,101 @@
+version: "3.8"
+
+services:
+    redis:
+        image: redis:7
+        ports:
+            - "6380:6379"
+        volumes:
+            - redis_data:/data
+        restart: always
+
+    rabbitmq:
+        image: rabbitmq:3-management
+        ports:
+            - "5672:5672"
+            - "15672:15672" # 관리 UI
+        environment:
+            RABBITMQ_DEFAULT_USER: guest
+            RABBITMQ_DEFAULT_PASS: guest
+        volumes:
+            - rabbitmq_data:/var/lib/rabbitmq
+        restart: always
+
+    registry:
+        build:
+            context: .
+            dockerfile: ./registry/Dockerfile
+        ports:
+            - "8000:8000"
+        environment:
+            - REDIS_HOST=redis
+            - REDIS_PORT=6379
+        depends_on:
+            - redis
+        restart: always
+
+    orchestrator:
+        build:
+            context: .
+            dockerfile: ./orchestrator/Dockerfile
+        ports:
+            - "8001:8000"
+        environment:
+            - REDIS_HOST=redis
+            - REDIS_PORT=6379
+            - RABBITMQ_HOST=rabbitmq
+            - RABBITMQ_PORT=5672
+            - REGISTRY_URL=http://registry:8000
+        depends_on:
+            - redis
+            - rabbitmq
+            - registry
+        restart: always
+
+    broker:
+        build:
+            context: .
+            dockerfile: ./broker/Dockerfile
+        ports:
+            - "8002:8000"
+        environment:
+            - REDIS_HOST=redis
+            - REDIS_PORT=6379
+            - RABBITMQ_HOST=rabbitmq
+            - RABBITMQ_PORT=5672
+            - REGISTRY_URL=http://registry:8000
+        depends_on:
+            - redis
+            - rabbitmq
+            - registry
+        restart: always
+
+    agent_web_search:
+        build:
+            context: .
+            dockerfile: ./agents/web_search/Dockerfile
+        environment:
+            - REGISTRY_URL=http://registry:8000
+            - RABBITMQ_HOST=rabbitmq
+            - RABBITMQ_PORT=5672
+        depends_on:
+            - registry
+            - rabbitmq
+        restart: always
+
+    agent_writer:
+        build:
+            context: .
+            dockerfile: ./agents/writer/Dockerfile
+        environment:
+            - REGISTRY_URL=http://registry:8000
+            - RABBITMQ_HOST=rabbitmq
+            - RABBITMQ_PORT=5672
+        depends_on:
+            - registry
+            - rabbitmq
+        restart: always
+
+volumes:
+    redis_data:
+    rabbitmq_data:
