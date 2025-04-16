@@ -24,33 +24,37 @@ services:
     registry:
         build:
             context: .
-            dockerfile: ./registry/Dockerfile
+            dockerfile: registry/Dockerfile
         ports:
             - "8000:8000"
         environment:
             - REDIS_HOST=redis
             - REDIS_PORT=6379
+            - LOG_LEVEL=DEBUG
+        volumes:
+            - ./registry:/app/registry
+            - ./common:/app/common
+        restart: always
         depends_on:
             - redis
-        restart: always
 
     orchestrator:
         build:
             context: .
-            dockerfile: ./orchestrator/Dockerfile
+            dockerfile: orchestrator/Dockerfile
         ports:
             - "8001:8000"
         environment:
             - REDIS_HOST=redis
             - REDIS_PORT=6379
-            - RABBITMQ_HOST=rabbitmq
-            - RABBITMQ_PORT=5672
             - REGISTRY_URL=http://registry:8000
-        depends_on:
-            - redis
-            - rabbitmq
-            - registry
+            - BROKER_URL=http://broker:8000
+        volumes:
+            - ./orchestrator:/app/orchestrator
+            - ./common:/app/common
         restart: always
+        depends_on:
+            - registry
 
     broker:
         build:
