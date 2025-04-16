@@ -6,7 +6,7 @@
 | -------------------------------------------- | --------------------------------------------------------------------------- | ---- |
 | FastAPI 기반 프로젝트 구조 생성              | Orchestrator, Broker, Agent, Registry 등 디렉토리 구분                      | [x]  |
 | Docker + Docker Compose 설정                 | Redis, RabbitMQ, 각 컴포넌트 컨테이너로 구성                                | [x]  |
-| Redis, RabbitMQ 기본 통신 테스트             | Redis: key set/get, PubSub<br>RabbitMQ: 브로커-에이전트 간 메시지 전송 확인 | []   |
+| Redis, RabbitMQ 기본 통신 테스트             | Redis: key set/get, PubSub<br>RabbitMQ: 브로커-에이전트 간 메시지 전송 확인 | [x]  |
 | LLM 호출 wrapper (LLMClient or litellm) 구현 | 다양한 provider 지원 구조                                                   | []   |
 
 ## 2단계: Agent Registry & 기본 Agent 구축
