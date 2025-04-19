@@ -7,6 +7,7 @@ httpx>=0.25.0
 # 메시징 및 캐싱
 redis>=5.0.0
 pika>=1.3.2
+aio-pika>=9.5.5
 
 # LLM 통합
 litellm>=1.12.0

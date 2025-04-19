@@ -1,0 +1,16 @@
+{
+  "hi": {
+    "gpt-4o-mini": {
+      "response": "Hello! How can I assist you today?",
+      "time": 1.22
+    },
+    "ollama/llama3.1:8b": {
+      "response": "Hi, how are you doing today?",
+      "time": 15.13
+    },
+    "ollama/gemma:2b": {
+      "response": "Hi! How can I assist you today? Is there anything I can help you with?",
+      "time": 3.26
+    }
+  }
+}

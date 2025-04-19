@@ -7,7 +7,18 @@ from typing import Dict, List, Optional, Any
 import time
 
 # FastAPI 앱 인스턴스 생성
-app = FastAPI(title="Web Search Agent")
+app = FastAPI(
+    title="Web Search Agent API",
+    description="웹 검색 기능을 제공하는 에이전트 API",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    swagger_ui_parameters={
+        "syntaxHighlight": {"theme": "nord"},
+        "displayRequestDuration": True,
+        "tryItOutEnabled": True,
+    }
+)
 
 # 환경 변수 가져오기
 REGISTRY_URL = os.getenv("REGISTRY_URL", "http://registry:8000")

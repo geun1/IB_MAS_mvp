@@ -16,7 +16,7 @@ class LLMClient:
     
     def __init__(
         self,
-        default_model: str = "gpt-3.5-turbo",
+        default_model: str = "gpt-4o-mini",
         api_key: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,

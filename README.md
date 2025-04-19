@@ -40,6 +40,25 @@ cp .env.example .env
 -   Broker: http://localhost:8002
 -   RabbitMQ 관리 UI: http://localhost:15672
 
+### API 문서 (Swagger UI)
+
+각 서비스는 Swagger UI를 통한 API 문서화 및 테스트 기능을 제공합니다:
+
+-   **Registry API 문서**: http://localhost:8000/docs
+-   **Orchestrator API 문서**: http://localhost:8001/docs
+-   **Broker API 문서**: http://localhost:8002/docs
+-   **Web Search 에이전트 API 문서**: http://localhost:[PORT]/docs
+-   **Writer 에이전트 API 문서**: http://localhost:[PORT]/docs
+
+Swagger UI에서는 다음과 같은 작업이 가능합니다:
+
+-   각 API 엔드포인트의 상세 설명 및 파라미터 확인
+-   API 직접 테스트 (Try it out 버튼)
+-   요청 및 응답 예제 확인
+-   API 모델 스키마 확인
+
+또한 ReDoc 문서도 제공됩니다: http://localhost:[PORT]/redoc
+
 ## 로드맵
 
 프로젝트의 개발 로드맵은 [roadmap.md](roadmap.md) 파일을 참조하세요.

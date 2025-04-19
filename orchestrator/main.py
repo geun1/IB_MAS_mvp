@@ -6,7 +6,20 @@ import json
 from typing import Dict, List, Optional, Any
 
 # FastAPI 앱 인스턴스 생성
-app = FastAPI(title="Orchestrator Service")
+app = FastAPI(
+    title="Orchestrator API",
+    description="사용자 요청을 분석하고 작업을 조율하는 API 서비스",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    swagger_ui_parameters={
+        "syntaxHighlight": {"theme": "obsidian"},
+        "deepLinking": True,
+        "defaultModelsExpandDepth": 2,
+        "displayRequestDuration": True,
+        "filter": True,
+    }
+)
 
 # 환경 변수 가져오기
 REGISTRY_URL = os.getenv("REGISTRY_URL", "http://registry:8000")

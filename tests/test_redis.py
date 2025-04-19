@@ -27,8 +27,14 @@ load_dotenv()
 
 # Redis 연결 설정
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
+# 환경 변수에서 포트를 가져오되, 명시적으로 지정되지 않은 경우 기본값 사용
 REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
 
+# 기본 연결 시도 실패 시 대체 포트 목록
+FALLBACK_PORTS = [6379, 6380]
+
+# 디버깅용: 현재 설정된 Redis 연결 정보 출력
+print(f"Redis 연결 설정: {REDIS_HOST}:{REDIS_PORT}")
 
 class TestRedisConnection:
     """
@@ -46,7 +52,29 @@ class TestRedisConnection:
         테스트에 사용되는 Redis 클라이언트를 생성하고,
         테스트 완료 후 생성된 테스트 키들을 정리합니다.
         """
-        client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
+        # 먼저 설정된 포트로 시도
+        try:
+            client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True, socket_connect_timeout=2.0)
+            # 연결 테스트
+            client.ping()
+        except redis.exceptions.ConnectionError:
+            print(f"포트 {REDIS_PORT}에 연결 실패, 대체 포트 시도 중...")
+            # 대체 포트 시도
+            for port in FALLBACK_PORTS:
+                if port != REDIS_PORT:
+                    try:
+                        print(f"포트 {port} 시도 중...")
+                        client = redis.Redis(host=REDIS_HOST, port=port, decode_responses=True, socket_connect_timeout=2.0)
+                        client.ping()
+                        print(f"포트 {port}에 연결 성공!")
+                        break
+                    except redis.exceptions.ConnectionError:
+                        print(f"포트 {port}에 연결 실패")
+                        continue
+            else:
+                # 모든 포트가 실패한 경우
+                raise Exception("어떤 Redis 포트에도 연결할 수 없습니다.")
+                
         yield client
         # 테스트에 사용된 키 정리
         client.delete("test:key", "test:hash", "test:list", "test:pubsub")
