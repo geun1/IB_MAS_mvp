@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO,
 logger = logging.getLogger("param_inference_test")
 
 # 테스트 설정
-BROKER_URL = "http://localhost:8001"
+BROKER_URL = "http://localhost:8002"
 
 async def test_param_inference_direct():
     """파라미터 추론 직접 테스트 (inference API)"""
@@ -50,7 +50,7 @@ async def test_param_inference_direct():
     async with httpx.AsyncClient() as client:
         # 테스트 1 실행
         logger.info("문서 작성 태스크 파라미터 추론 테스트...")
-        response = await client.post(f"{BROKER_URL}/test/infer-params", json=writer_test)
+        response = await client.post(f"{BROKER_URL}/test/infer-simple", json=writer_test)
         
         if response.status_code != 200:
             logger.error(f"파라미터 추론 API 호출 실패: {response.status_code} - {response.text}")
@@ -78,7 +78,7 @@ async def test_param_inference_direct():
         return True
 
 async def test_param_inference_with_task():
-    """실제 태스크를 통한 파라미터 추론 테스트"""
+    """태스크 처리를 통한 파라미터 추론 테스트"""
     logger.info("=== 태스크 처리를 통한 파라미터 추론 테스트 시작 ===")
     
     # 의도적으로 필수 파라미터 누락
@@ -92,9 +92,9 @@ async def test_param_inference_with_task():
     }
     
     async with httpx.AsyncClient() as client:
-        # 태스크 생성
+        # 태스크 생성 - /task에서 /tasks로 변경
         logger.info("누락된 파라미터가 있는 태스크 생성 중...")
-        response = await client.post(f"{BROKER_URL}/task", json=task_request)
+        response = await client.post(f"{BROKER_URL}/tasks", json=task_request)
         
         if response.status_code != 200:
             logger.error(f"태스크 생성 실패: {response.status_code} - {response.text}")

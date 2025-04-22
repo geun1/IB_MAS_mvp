@@ -6,41 +6,73 @@ import redis
 from .models import Agent, AgentStatus, AgentHeartbeat, AgentParam
 from .config import REDIS_HOST, REDIS_PORT, REDIS_DB, REDIS_PASSWORD, DEFAULT_TTL
 
+# --- 메모리 폴백용 자료구조 -----------------------------
+_MEM_AGENTS: dict[str, dict] = {}
+_MEM_AGENT_PARAMS: dict[str, list] = {}
+# ------------------------------------------------------
+
 class RedisClient:
     def __init__(self):
-        self.redis = redis.Redis(
-            host=REDIS_HOST,
-            port=REDIS_PORT,
-            db=REDIS_DB,
-            password=REDIS_PASSWORD,
-            decode_responses=True
-        )
-        
-    async def register_agent(self, agent: Agent) -> bool:
-        """에이전트 등록 또는 업데이트"""
+        """Redis 클라이언트 초기화"""
         try:
-            # JSON으로 직렬화할 수 있도록 에이전트 객체를 딕셔너리로 변환
-            agent_data = agent.dict()
-            
-            # Redis에 에이전트 정보 저장
-            self.redis.hset("agents", agent.id, json.dumps(agent_data))
-            
-            # 역할별 에이전트 목록에 추가
-            self.redis.sadd(f"role:{agent.role}", agent.id)
-            self.redis.sadd("roles", agent.role)
-            self.redis.sadd("agents", agent.id)
-            
-            # 에이전트 TTL 설정 (기본 30초)
-            self.redis.set(f"ttl:{agent.id}", int(time.time()), ex=DEFAULT_TTL)
-            
-            # 파라미터 스키마 저장
-            if agent.params:
-                param_schema = [param.dict() for param in agent.params]
-                self.redis.hset("agent_params", agent.id, json.dumps(param_schema))
-            
-            return True
+            self.redis = redis.Redis(
+                host=REDIS_HOST,
+                port=REDIS_PORT,
+                db=REDIS_DB,
+                password=REDIS_PASSWORD,
+                decode_responses=True
+            )
+            # 연결 시험
+            self.redis.ping()
+            logging.info(f"Redis 연결 성공: {REDIS_HOST}:{REDIS_PORT}")
         except Exception as e:
-            logging.error(f"에이전트 등록 오류: {str(e)}")
+            logging.warning(f"Redis 연결 실패, 메모리 모드로 전환: {str(e)}")
+            self.redis = None       # 폴백
+
+    async def register_agent(self, agent: Agent) -> bool:
+        """에이전트 등록"""
+        try:
+            logging.info(f"에이전트 등록 시작: {agent.id}")
+            
+            # Redis가 없으면 메모리 저장
+            if self.redis is None:
+                _MEM_AGENTS[agent.id] = agent.dict()
+                logging.info(f"(메모리) 에이전트 {agent.id} 등록 완료")
+                return True
+
+            try:
+                # 파이프라인으로 모든 작업 수행
+                pipeline = self.redis.pipeline()
+                
+                # 에이전트 데이터 저장
+                agent_dict = agent.dict()
+                agent_json = json.dumps(agent_dict)
+                
+                # 1. 에이전트 기본 정보 저장
+                pipeline.hset("agents", agent.id, agent_json)
+                
+                # 2. 역할별 인덱스 업데이트
+                pipeline.sadd(f"role:{agent.role}", agent.id)
+                pipeline.sadd("roles", agent.role)
+                
+                # 3. 전체 에이전트 ID 목록 업데이트
+                pipeline.sadd("agent_ids", agent.id)
+                
+                # 4. TTL 설정
+                pipeline.set(f"ttl:{agent.id}", int(time.time()), ex=DEFAULT_TTL)
+                
+                # 파이프라인 실행
+                pipeline.execute()
+                
+                logging.info(f"에이전트 {agent.id} 등록 완료")
+                return True
+                
+            except redis.RedisError as e:
+                logging.error(f"Redis 오류: {str(e)}")
+                return False
+                
+        except Exception as e:
+            logging.error(f"에이전트 등록 중 오류 발생: {str(e)}")
             return False
     
     async def update_heartbeat(self, heartbeat: AgentHeartbeat, ttl: int = DEFAULT_TTL) -> bool:
@@ -100,105 +132,120 @@ class RedisClient:
         """에이전트 목록 조회"""
         agents = []
         try:
-            agent_ids = []
-            
-            # 조건에 따른 에이전트 ID 필터링
-            if role and status:
-                # 역할과 상태 모두 필터링
-                role_agents = self.redis.smembers(f"role:{role}")
-                status_agents = self.redis.smembers(f"status:{status}")
-                agent_ids = list(role_agents.intersection(status_agents))
-            elif role:
-                # 역할만 필터링
-                agent_ids = self.redis.smembers(f"role:{role}")
-            elif status:
-                # 상태만 필터링
-                agent_ids = self.redis.smembers(f"status:{status}")
-            else:
-                # 모든 에이전트
-                agent_ids = self.redis.smembers("agents")
-            
-            # 에이전트 정보 조회
-            for agent_id in agent_ids:
-                # 역할 찾기
-                agent_role = None
-                for r in self.redis.smembers("roles"):
-                    if self.redis.sismember(f"role:{r}", agent_id):
-                        agent_role = r
-                        break
-                
-                if agent_role:
-                    agent_key = f"agent:{agent_role}:{agent_id}"
-                    agent_data = self.redis.get(agent_key)
+            # 메모리 모드
+            if self.redis is None:
+                for agent_dict in _MEM_AGENTS.values():
+                    if role and agent_dict["role"] != role:
+                        continue
+                    if status and agent_dict.get("status") != status:
+                        continue
+                    agents.append(Agent(**agent_dict))
+                return agents
+
+            # Redis 모드
+            try:
+                # 1. agent_ids에서 모든 에이전트 ID 가져오기
+                if role:
+                    # 특정 역할의 에이전트만 가져오기
+                    agent_ids = self.redis.smembers(f"role:{role}")
+                    logging.info(f"Role {role} 에이전트 ID 목록: {agent_ids}")
+                else:
+                    # 모든 에이전트 가져오기
+                    agent_ids = self.redis.smembers("agent_ids")
+                    logging.info(f"전체 에이전트 ID 목록: {agent_ids}")
+
+                # 2. 각 에이전트의 상세 정보 가져오기
+                for agent_id in agent_ids:
+                    agent_data = self.redis.hget("agents", agent_id)
                     if agent_data:
-                        agents.append(Agent.model_validate_json(agent_data))
-            
-            return agents
+                        try:
+                            agent_dict = json.loads(agent_data)
+                            logging.info(f"에이전트 데이터 로드: {agent_id} = {agent_dict}")
+                            
+                            # 상태 필터링
+                            if status and agent_dict.get("status") != status:
+                                continue
+                                
+                            agents.append(Agent(**agent_dict))
+                            logging.info(f"에이전트 추가됨: {agent_id}")
+                        except Exception as e:
+                            logging.error(f"에이전트 데이터 파싱 오류: {agent_id} - {str(e)}")
+
+                logging.info(f"조회된 전체 에이전트 수: {len(agents)}")
+                return agents
+                
+            except redis.RedisError as e:
+                logging.error(f"Redis 조회 오류: {str(e)}")
+                return []
+                
         except Exception as e:
-            print(f"에이전트 목록 조회 실패: {str(e)}")
+            logging.error(f"에이전트 목록 조회 실패: {str(e)}")
             return []
     
     async def unregister_agent(self, role: str, agent_id: str) -> bool:
         """에이전트 등록 해제"""
         try:
-            agent_key = f"agent:{role}:{agent_id}"
+            # 로깅 추가
+            logging.info(f"에이전트 등록 해제 시도: role={role}, id={agent_id}")
             
-            # 현재 에이전트 정보 조회
-            agent_data = self.redis.get(agent_key)
+            # 해시에서 에이전트 정보 조회
+            agent_data = self.redis.hget("agents", agent_id)
             if not agent_data:
+                logging.warning(f"에이전트 정보 없음: {agent_id}")
                 return False  # 이미 없는 에이전트
-                
-            agent = Agent.model_validate_json(agent_data)
             
             # Redis 트랜잭션으로 모든 인덱스에서 제거
             pipeline = self.redis.pipeline()
-            pipeline.delete(agent_key)
-            pipeline.srem(f"role:{role}", agent_id)
-            pipeline.srem(f"status:{agent.status}", agent_id)
-            pipeline.srem("agents", agent_id)
+            pipeline.hdel("agents", agent_id)  # 해시에서 삭제
+            pipeline.srem(f"role:{role}", agent_id)  # 역할별 인덱스에서 삭제
+            pipeline.srem("agent_ids", agent_id)  # ID 목록에서 삭제
+            pipeline.delete(f"ttl:{agent_id}")  # TTL 키 삭제
             
-            # 해당 역할의 에이전트가 더 이상 없으면 역할도 제거
-            if not self.redis.scard(f"role:{role}"):
-                pipeline.srem("roles", role)
-                
-            pipeline.execute()
+            result = pipeline.execute()
+            logging.info(f"등록 해제 결과: {result}")
             return True
         except Exception as e:
-            print(f"에이전트 제거 실패: {str(e)}")
+            logging.error(f"에이전트 제거 실패: {str(e)}")
             return False
     
     async def cleanup_inactive_agents(self, cutoff_time: float) -> int:
-        """비활성 에이전트 정리 (TTL만료 외에 추가적인 정리)"""
-        count = 0
+        """비활성 에이전트 정리"""
         try:
-            # 모든 에이전트 및 역할 조회
-            roles = self.redis.smembers("roles")
+            if self.redis is None:
+                return 0
             
-            for role in roles:
-                agent_ids = self.redis.smembers(f"role:{role}")
+            cleaned = 0
+            pipeline = self.redis.pipeline()
+            
+            # agent_ids 집합에서 모든 에이전트 ID 가져오기
+            agent_ids = self.redis.smembers("agent_ids")
+            
+            for agent_id in agent_ids:
+                ttl_key = f"ttl:{agent_id}"
+                last_heartbeat = self.redis.get(ttl_key)
                 
-                for agent_id in agent_ids:
-                    agent_key = f"agent:{role}:{agent_id}"
-                    agent_data = self.redis.get(agent_key)
-                    
-                    # TTL이 만료되어 데이터가 없거나, 마지막 하트비트가 cutoff_time보다 오래된 경우
-                    if not agent_data:
-                        # 인덱스에서만 제거 (데이터는 이미 TTL로 제거됨)
-                        pipeline = self.redis.pipeline()
-                        pipeline.srem(f"role:{role}", agent_id)
-                        pipeline.srem("agents", agent_id)
-                        pipeline.execute()
-                        count += 1
-                    else:
-                        agent = Agent.model_validate_json(agent_data)
-                        if agent.last_heartbeat and agent.last_heartbeat < cutoff_time:
-                            # 인덱스 및 데이터 모두 제거
-                            await self.unregister_agent(role, agent_id)
-                            count += 1
+                if last_heartbeat and float(last_heartbeat) < cutoff_time:
+                    # 에이전트 정보 가져오기
+                    agent_data = self.redis.hget("agents", agent_id)
+                    if agent_data:
+                        agent_dict = json.loads(agent_data)
+                        role = agent_dict.get("role")
+                        
+                        # 관련된 모든 키 삭제
+                        pipeline.hdel("agents", agent_id)
+                        pipeline.srem("agent_ids", agent_id)
+                        if role:
+                            pipeline.srem(f"role:{role}", agent_id)
+                        pipeline.delete(ttl_key)
+                        cleaned += 1
             
-            return count
+            if cleaned > 0:
+                pipeline.execute()
+            
+            return cleaned
+            
         except Exception as e:
-            print(f"비활성 에이전트 정리 실패: {str(e)}")
+            logging.error(f"비활성 에이전트 정리 실패: {str(e)}")
             return 0
 
     async def update_agent_statistics(self, agent_id: str, task_status: str, execution_time: Optional[float] = None):
@@ -261,5 +308,5 @@ class RedisClient:
             logging.error(f"역할별 에이전트 조회 오류: {str(e)}")
             return []
 
-# 싱글톤 인스턴스
+# RedisClient 인스턴스 생성
 redis_client = RedisClient() 

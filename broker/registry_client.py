@@ -27,17 +27,28 @@ class RegistryClient:
         self.registry_url = registry_url
         self.logger = logging.getLogger("registry_client")
     
-    async def get_agents_by_role(self, role: str, status: str = "available", max_load: float = 0.8) -> List[Agent]:
-        """특정 역할의 에이전트 목록 조회"""
+    async def get_agents_by_role(self, role: str) -> List[Agent]:
+        """특정 역할을 가진 에이전트 목록 조회"""
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.get(
                     f"{self.registry_url}/agents/by-role/{role}",
-                    params={"status": status, "max_load": max_load}
+                    params={"status": "available", "max_load": 0.8}
                 )
                 response.raise_for_status()
-                data = response.json()
-                return [Agent(**agent) for agent in data.get("agents", [])]
+                
+                # 수정: 이미 response.json()은 객체이므로 await을 사용하지 않음
+                agents_data = response.json()
+                
+                # 리스트 형태인지 확인하고 Agent 객체로 변환
+                if isinstance(agents_data, list):
+                    return [Agent(**agent) for agent in agents_data]
+                elif "agents" in agents_data and isinstance(agents_data["agents"], list):
+                    return [Agent(**agent) for agent in agents_data["agents"]]
+                else:
+                    self.logger.error(f"예상치 못한 응답 형식: {agents_data}")
+                    return []
+                    
         except Exception as e:
             self.logger.error(f"Registry 통신 오류: {str(e)}")
             return []

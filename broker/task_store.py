@@ -193,3 +193,55 @@ class TaskStore:
                 tasks.append(TaskResult(**json.loads(task_data)))
                 
         return tasks, total 
+
+    async def get_tasks_by_conversation(
+        self, conversation_id: str, page: int = 1, page_size: int = 20
+    ) -> Tuple[List[TaskResult], int]:
+        """
+        대화 ID로 태스크 검색
+        
+        Args:
+            conversation_id: 대화 ID
+            page: 페이지 번호 (1부터 시작)
+            page_size: 페이지 크기
+            
+        Returns:
+            태스크 목록, 총 태스크 수
+        """
+        try:
+            # 대화 ID로 태스크 ID 검색
+            task_ids = set()
+            cursor = 0
+            
+            while True:
+                cursor, keys = self.redis.scan(
+                    cursor, match=f"task:*:{conversation_id}", count=1000
+                )
+                for key in keys:
+                    if key.startswith("task:"):
+                        task_id = key.split(":", 1)[1]
+                        task_ids.add(task_id)
+                if cursor == 0:
+                    break
+                
+            # 태스크 정보 조회
+            tasks = []
+            for task_id in task_ids:
+                task_data = self.redis.get(f"task:{task_id}")
+                if task_data:
+                    tasks.append(TaskResult(**json.loads(task_data)))
+                    
+            # 정렬 (최신순)
+            tasks.sort(key=lambda x: x.created_at, reverse=True)
+            
+            # 페이지네이션
+            total = len(tasks)
+            start_idx = (page - 1) * page_size
+            end_idx = start_idx + page_size
+            page_tasks = tasks[start_idx:end_idx]
+            
+            return page_tasks, total
+            
+        except Exception as e:
+            self.logger.error(f"대화 ID로 태스크 검색 중 오류: {str(e)}")
+            return [], 0 

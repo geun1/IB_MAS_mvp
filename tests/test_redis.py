@@ -28,10 +28,11 @@ load_dotenv()
 # Redis 연결 설정
 REDIS_HOST = os.getenv("REDIS_HOST", "localhost")
 # 환경 변수에서 포트를 가져오되, 명시적으로 지정되지 않은 경우 기본값 사용
-REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+# REDIS_PORT = int(os.getenv("REDIS_PORT", 6379))
+REDIS_PORT = 6379
 
 # 기본 연결 시도 실패 시 대체 포트 목록
-FALLBACK_PORTS = [6379, 6380]
+# FALLBACK_PORTS = [6379, 6380]
 
 # 디버깅용: 현재 설정된 Redis 연결 정보 출력
 print(f"Redis 연결 설정: {REDIS_HOST}:{REDIS_PORT}")

@@ -13,21 +13,21 @@
 
 | 항목                                 | 설명                                                    | 체크 |
 | ------------------------------------ | ------------------------------------------------------- | ---- |
-| Registry 모듈 구현 (FastAPI + Redis) | agent 등록, 갱신, 조회 API (/register, /list)           | []   |
-| Agent 구조 설계 (role, param schema) | 예: web_search, summarizer, writer 등 정의              | []   |
-| 기본 Agent 구현 2~3개                | /run, /heartbeat endpoint 포함<br>입력 param validation | []   |
-| 에이전트 등록 자동화                 | 실행 시 자동 등록 → TTL 설정                            | []   |
-| Registry 조회 API 구현               | GET /agents/by-role?role=xxx                            | []   |
+| Registry 모듈 구현 (FastAPI + Redis) | agent 등록, 갱신, 조회 API (/register, /list)           | [x]  |
+| Agent 구조 설계 (role, param schema) | 예: web_search, summarizer, writer 등 정의              | [x]  |
+| 기본 Agent 구현 2~3개                | /run, /heartbeat endpoint 포함<br>입력 param validation | [x]  |
+| 에이전트 등록 자동화                 | 실행 시 자동 등록 → TTL 설정                            | [x]  |
+| Registry 조회 API 구현               | GET /agents/by-role?role=xxx                            | [x]  |
 
 ## 3단계: Broker 구현
 
 | 항목                              | 설명                                     | 체크 |
 | --------------------------------- | ---------------------------------------- | ---- |
-| Broker 기본 구조 생성             | FastAPI + RabbitMQ consumer              | []   |
-| Task 수신 → Agent 매핑 로직 구현  | registry 기반 role → agent 선택          | []   |
-| Param 채우기 로직 구현 (LLM 호출) | 입력 부족 시 LLM 통해 param 완성 시도    | []   |
-| 재질문 판단 로직                  | param 추론 실패 시 → 유저에게 물어보기   | []   |
-| Agent 호출 & 응답 반환            | HTTP or queue 방식으로 실행 후 결과 수집 | []   |
+| Broker 기본 구조 생성             | FastAPI + RabbitMQ consumer              | [x]  |
+| Task 수신 → Agent 매핑 로직 구현  | registry 기반 role → agent 선택          | [x]  |
+| Param 채우기 로직 구현 (LLM 호출) | 입력 부족 시 LLM 통해 param 완성 시도    | [x]  |
+| 재질문 판단 로직                  | param 추론 실패 시 → 유저에게 물어보기   | [x]  |
+| Agent 호출 & 응답 반환            | HTTP or queue 방식으로 실행 후 결과 수집 | [x]  |
 
 ## 4단계: Orchestrator (Planner) 구축
 

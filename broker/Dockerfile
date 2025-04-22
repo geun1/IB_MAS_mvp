@@ -15,4 +15,4 @@ ENV PYTHONPATH="${PYTHONPATH}:/app"
 WORKDIR /app
 
 # 프로젝트를 모듈로 인식하도록 수정
-CMD ["uvicorn", "broker.main:app", "--host", "0.0.0.0", "--port", "8001"] 
+CMD ["uvicorn", "broker.main:app", "--host", "0.0.0.0", "--port", "8000"] 

@@ -17,7 +17,11 @@ from broker.task_store import TaskStore
 
 # 환경 변수 로드
 REGISTRY_URL = os.getenv("REGISTRY_URL", "http://registry:8000")
-RABBITMQ_URL = os.getenv("RABBITMQ_URL", "amqp://guest:guest@rabbitmq:5672/")
+RABBITMQ_HOST = os.getenv("RABBITMQ_HOST", "rabbitmq")
+RABBITMQ_PORT = os.getenv("RABBITMQ_PORT", "5672")
+RABBITMQ_USER = os.getenv("RABBITMQ_USER", "guest")
+RABBITMQ_PASS = os.getenv("RABBITMQ_PASS", "guest")
+RABBITMQ_URL = f"amqp://{RABBITMQ_USER}:{RABBITMQ_PASS}@{RABBITMQ_HOST}:{RABBITMQ_PORT}/"
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 
 # API 모델
@@ -40,6 +44,12 @@ app = FastAPI(
     root_path=""
 )
 
+# 로깅 설정 강화
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
 # 서비스 초기화
 @app.on_event("startup")
 async def startup_event():
@@ -52,9 +62,28 @@ async def startup_event():
     # 태스크 스토어 초기화
     app.state.task_store = TaskStore(REDIS_URL)
     
-    # 큐 매니저 설정
-    app.state.queue_manager = QueueManager(RABBITMQ_URL)
-    await app.state.queue_manager.connect()
+    # RabbitMQ URL 구성 확인 (로깅)
+    rabbitmq_url = f"amqp://{RABBITMQ_USER}:{RABBITMQ_PASS}@{RABBITMQ_HOST}:{RABBITMQ_PORT}/"
+    logging.info(f"RabbitMQ 연결 URL: {rabbitmq_url}")
+    
+    # 큐 매니저 설정 - 로깅 강화
+    app.state.queue_manager = QueueManager(rabbitmq_url)
+    
+    # 비동기 태스크로 RabbitMQ 연결 시도 (앱 시작을 블록하지 않음)
+    asyncio.create_task(connect_rabbitmq(app.state.queue_manager))
+
+# RabbitMQ 연결을 위한 별도 함수 추가
+async def connect_rabbitmq(queue_manager):
+    try:
+        # RabbitMQ가 준비될 때까지 시간 제공
+        logging.info("RabbitMQ 서비스가 준비될 때까지 15초 대기...")
+        await asyncio.sleep(15)
+        
+        # 연결 시도
+        await queue_manager.connect()
+    except Exception as e:
+        logging.error(f"RabbitMQ 연결 초기화 중 오류: {str(e)}")
+        logging.warning("RabbitMQ 없이 제한된 기능으로 실행됩니다")
 
 # API 엔드포인트
 @app.post("/tasks", response_model=TaskResponse)
@@ -183,57 +212,32 @@ async def health_check():
         }
 
 # 파라미터 추론 테스트용 API
-@app.post("/test/infer-params")
-async def test_infer_params(
-    request: Dict[str, Any]
-):
-    """파라미터 추론 테스트 API"""
+@app.post("/test/infer-params", tags=["테스트"])
+async def test_infer_params(request: dict):
+    """파라미터 추론 테스트 엔드포인트"""
     try:
-        # 필수 필드 검증
-        if "task_description" not in request:
-            raise HTTPException(status_code=400, detail="태스크 설명(task_description)이 필요합니다")
-        if "param_schemas" not in request:
-            raise HTTPException(status_code=400, detail="파라미터 스키마(param_schemas)가 필요합니다")
-            
-        task_description = request["task_description"]
-        param_schemas = [AgentParam(**schema) for schema in request["param_schemas"]]
+        logging.info(f"파라미터 추론 테스트 요청 수신: {request}")
+        
+        task_description = request.get("task_description")
+        param_schemas = request.get("param_schemas", [])
         existing_params = request.get("existing_params", {})
         
-        # 전체 파라미터 스키마 중 필수이지만 전달되지 않은 파라미터 선별
-        missing_params = []
-        for schema in param_schemas:
-            if schema.required and schema.name not in existing_params:
-                missing_params.append(schema)
+        # 쉼표로 구분된 AgentParam 객체 리스트로 변환
+        agent_params = [AgentParam(**schema) for schema in param_schemas]
         
-        # 추론 결과
-        result = {}
-        
-        if missing_params:
-            # LLM으로 파라미터 추론
-            inferred_params = await app.state.llm_client.infer_missing_params(
-                task_description,
-                [p.dict() for p in missing_params],
-                existing_params
-            )
-            
-            # 추론된 파라미터 검증
-            for schema in missing_params:
-                if schema.name in inferred_params:
-                    # 단일 파라미터에 대한 검증을 위한 임시 딕셔너리
-                    temp = {schema.name: inferred_params[schema.name]}
-                    validated = app.state.param_processor.validate_params(temp, [schema])
-                    result[schema.name] = validated[schema.name]
+        # ParamProcessor를 사용해 추론 실행 - 메서드 이름 수정
+        logging.info("파라미터 추론 시작...")
+        inferred_params = await app.state.param_processor.fill_missing_params(
+            agent_params, existing_params
+        )
+        logging.info(f"추론 완료: {inferred_params}")
         
         return {
-            "task_description": task_description,
-            "existing_params": existing_params,
-            "missing_params": [p.dict() for p in missing_params],
-            "inferred_params": result
+            "inferred_params": inferred_params,
+            "original_params": existing_params
         }
-        
-    except HTTPException:
-        raise
     except Exception as e:
+        logging.error(f"파라미터 추론 중 오류: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"파라미터 추론 오류: {str(e)}")
 
 # 태스크 조회 API
@@ -288,6 +292,62 @@ async def cancel_task(task_id: str):
     )
     
     return {"status": "success", "message": "태스크가 취소되었습니다"}
+
+# 파라미터 추론 테스트용 API
+@app.post("/test/infer-simple", tags=["테스트"])
+async def test_infer_simple(request: dict):
+    """간소화된 파라미터 추론 테스트 엔드포인트"""
+    try:
+        task_description = request.get("task_description", "")
+        param_schemas = request.get("param_schemas", [])
+        existing_params = request.get("existing_params", {})
+        
+        # 간단한 응답 생성 (실제 추론 없이)
+        inferred = {}
+        for schema in param_schemas:
+            name = schema.get("name", "")
+            if name and name not in existing_params and schema.get("required", False):
+                if name == "tone":
+                    inferred[name] = "formal"  # 기본값 설정
+                elif name == "length":
+                    inferred[name] = 500  # 기본값 설정
+        
+        return {
+            "inferred_params": inferred,
+            "original_params": existing_params
+        }
+    except Exception as e:
+        logging.error(f"테스트 추론 중 오류: {str(e)}")
+        return {
+            "inferred_params": {},
+            "original_params": existing_params,
+            "error": str(e)
+        }
+
+# 대화 ID로 관련 태스크 조회 API
+@app.get("/tasks/by-conversation/{conversation_id}")
+async def get_tasks_by_conversation(
+    conversation_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100)
+):
+    """대화 ID로 관련 태스크 조회"""
+    try:
+        # 특정 대화 ID에 해당하는 태스크 조회
+        tasks, total = await app.state.task_store.get_tasks_by_conversation(
+            conversation_id, page, page_size
+        )
+        
+        return {
+            "tasks": tasks,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "conversation_id": conversation_id
+        }
+    except Exception as e:
+        logging.error(f"대화 ID로 태스크 조회 중 오류: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # 서비스 실행
 if __name__ == "__main__":

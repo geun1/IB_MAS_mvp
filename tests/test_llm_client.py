@@ -18,7 +18,7 @@ sys.modules['litellm.utils'] = MagicMock()
 from common.llm_client import LLMClient
 
 # 가짜 응답 생성 함수
-def create_mock_response(content="이것은 테스트 응답입니다", model="gpt-3.5-turbo"):
+def create_mock_response(content="이것은 테스트 응답입니다", model="gpt-4o-mini"):
     if "gpt" in model:
         # OpenAI 형식 응답
         return {
@@ -95,7 +95,7 @@ class TestLLMClient(unittest.TestCase):
 
     def setUp(self):
         """각 테스트 전 설정"""
-        self.client = LLMClient(default_model="gpt-3.5-turbo")
+        self.client = LLMClient(default_model="gpt-4o-mini")
         self.test_messages = [
             {"role": "system", "content": "당신은 유용한 AI 비서입니다."},
             {"role": "user", "content": "안녕하세요"}
@@ -312,7 +312,7 @@ class TestRealAPICall(unittest.TestCase):
             
         response = self.client.ask(
             self.test_prompt,
-            model="gpt-3.5-turbo"
+            model="gpt-4o-mini"
         )
         
         self.assertIsInstance(response, str)

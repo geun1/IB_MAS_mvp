@@ -1,0 +1,47 @@
+version: "3.8"
+
+services:
+    web_search_agent:
+        build:
+            context: ../
+            dockerfile: ./agents/web_search/Dockerfile
+        ports:
+            - "8010:8000"
+        environment:
+            - REGISTRY_URL=http://registry:8000
+            - RABBITMQ_HOST=rabbitmq
+            - RABBITMQ_PORT=5672
+            - CONTAINER_NAME=web_search_agent
+            - PORT=8000
+        volumes:
+            - ../common:/app/common
+            - ./web_search:/app/agent
+        restart: always
+        networks:
+            - agent-network
+            - multiagent-network
+
+    writer_agent:
+        build:
+            context: ../
+            dockerfile: ./agents/writer/Dockerfile
+        ports:
+            - "8011:8000"
+        environment:
+            - REGISTRY_URL=http://registry:8000
+            - RABBITMQ_HOST=rabbitmq
+            - RABBITMQ_PORT=5672
+            - CONTAINER_NAME=writer_agent
+            - PORT=8000
+        volumes:
+            - ../common:/app/common
+            - ./writer:/app/agent
+        restart: always
+        networks:
+            - agent-network
+            - multiagent-network
+
+networks:
+    agent-network:
+    multiagent-network:
+        external: true

@@ -5,10 +5,12 @@ from fastapi import FastAPI, HTTPException, Query, BackgroundTasks, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import json
+import logging
 
 from .models import Agent, AgentHeartbeat, AgentStatus, AgentList, ApiResponse, AgentStatistics
 from .db import redis_client
 from .config import DEFAULT_TTL, HOST, PORT
+from common.models import AgentHeartbeat
 
 app = FastAPI(
     title="Agent Registry API",
@@ -32,7 +34,7 @@ app = FastAPI(
 # CORS 설정
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # 개발 환경에서는 모든 origin 허용
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -55,48 +57,95 @@ async def cleanup_task():
 # 시작 시 백그라운드 작업 등록
 @app.on_event("startup")
 async def startup_event():
+    """애플리케이션 시작 시 초기화 작업"""
+    # agents 딕셔너리 초기화
+    app.state.agents = {}
+    
+    # 필요한 경우 Redis 연결 초기화 등 다른 작업도 여기서 수행
+    logging.info("Registry 서비스가 시작되었습니다.")
+    
     asyncio.create_task(cleanup_task())
 
 # 라우트 정의
-@app.post("/register", response_model=ApiResponse, tags=["에이전트 관리"])
-async def register_agent(agent: Agent):
-    """새 에이전트 등록 또는 기존 에이전트 정보 업데이트"""
-    success = await redis_client.register_agent(agent)
-    
-    if not success:
-        raise HTTPException(status_code=500, detail="에이전트 등록 실패")
-    
-    return {
-        "status": "success",
-        "message": f"에이전트 '{agent.role}/{agent.id}' 등록됨",
-        "data": {"agent_id": agent.id}
-    }
-
-@app.post("/heartbeat/{role}/{agent_id}", response_model=ApiResponse, tags=["에이전트 관리"])
-async def agent_heartbeat(
-    role: str, 
-    agent_id: str, 
-    heartbeat: AgentHeartbeat
-):
-    """에이전트 하트비트 갱신"""
+@app.post("/register", status_code=201)
+async def register_agent(agent_data: dict):
+    """새 에이전트 등록 API - 상세 오류 처리 추가"""
     try:
-        success = await redis_client.update_heartbeat(heartbeat)
+        # 요청 데이터 로깅
+        logging.info(f"에이전트 등록 요청 데이터: {json.dumps(agent_data)}")
         
-        if not success:
-            raise HTTPException(status_code=404, detail="에이전트를 찾을 수 없습니다")
+        # 필수 필드 확인
+        required_fields = ["id", "role", "description", "endpoint"]
+        for field in required_fields:
+            if field not in agent_data:
+                detail = f"필수 필드 누락: {field}"
+                logging.error(detail)
+                raise HTTPException(status_code=422, detail=detail)
+        
+        # Agent 모델 변환
+        try:
+            agent = Agent(**agent_data)
+            logging.info(f"Agent 객체 생성 성공: {agent.id}")
+        except Exception as e:
+            error_msg = f"Agent 모델 변환 실패: {str(e)}"
+            logging.error(error_msg)
+            raise HTTPException(status_code=422, detail=error_msg)
+        
+        # 저장소에 저장
+        try:
+            success = await redis_client.register_agent(agent)
+            if not success:
+                raise HTTPException(status_code=500, detail="저장소( Redis / Memory )에 에이전트 등록 실패")
             
-        return {
-            "status": "success",
-            "message": "하트비트가 갱신되었습니다",
-            "data": None
-        }
+            return {
+                "status": "success",
+                "message": f"에이전트 '{agent.role}/{agent.id}' 등록 완료",
+                "data": {"agent_id": agent.id}
+            }
+            
+        except Exception as e:
+            error_msg = f"에이전트 데이터 저장 실패: {str(e)}"
+            logging.error(error_msg)
+            raise HTTPException(status_code=500, detail=error_msg)
+        
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"하트비트 갱신 오류: {str(e)}"
-        )
+        error_msg = f"에이전트 등록 처리 중 예기치 않은 오류: {str(e)}"
+        logging.error(error_msg)
+        raise HTTPException(status_code=500, detail=error_msg)
+
+@app.post("/heartbeat/{agent_type}/{agent_id}", status_code=200)
+async def agent_heartbeat(agent_type: str, agent_id: str, heartbeat: AgentHeartbeat):
+    try:
+        # 수신한 heartbeat 데이터 로깅
+        logging.debug(f"Heartbeat 수신: {agent_type}/{agent_id} - {heartbeat.model_dump(mode='json')}")
+        
+        # 등록된 에이전트 확인 
+        if agent_id not in app.state.agents.get(agent_type, {}):
+            # 자동 등록 로직 (선택 사항)
+            app.state.agents.setdefault(agent_type, {})[agent_id] = {
+                "id": agent_id,
+                "type": agent_type,
+                "status": heartbeat.status,
+                "last_heartbeat": heartbeat.timestamp,
+                "metrics": heartbeat.metrics.model_dump(mode='json'),
+                "version": heartbeat.version
+            }
+            logging.info(f"새 에이전트 자동 등록: {agent_type}/{agent_id}")
+        else:
+            # 기존 에이전트 상태 업데이트
+            app.state.agents[agent_type][agent_id].update({
+                "status": heartbeat.status,
+                "last_heartbeat": heartbeat.timestamp,
+                "metrics": heartbeat.metrics.model_dump(mode='json')
+            })
+        
+        return {"status": "success", "message": "Heartbeat received"}
+    
+    except Exception as e:
+        logging.error(f"Heartbeat 처리 중 오류: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Heartbeat 처리 중 오류: {str(e)}")
 
 @app.post("/unregister", response_model=ApiResponse, tags=["에이전트 관리"])
 async def unregister_agent(role: str = Query(...), agent_id: str = Query(...)):
@@ -111,73 +160,64 @@ async def unregister_agent(role: str = Query(...), agent_id: str = Query(...)):
         "message": f"에이전트 '{role}/{agent_id}' 등록 해제됨"
     }
 
-@app.get("/agents", response_model=AgentList)
+@app.delete("/agents/{role}/{agent_id}")
+async def unregister_agent_by_path(role: str, agent_id: str):
+    """에이전트 등록 해제 - 경로 파라미터 방식"""
+    try:
+        # 기존 구현된 메서드 활용
+        success = await redis_client.unregister_agent(role, agent_id)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="등록되지 않은 에이전트")
+        
+        return {
+            "status": "success", 
+            "message": f"Agent {agent_id} unregistered successfully"
+        }
+    except Exception as e:
+        logging.error(f"에이전트 등록 해제 중 오류: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"에이전트 등록 해제 중 오류: {str(e)}")
+
+@app.get("/agents")
 async def list_agents(
     role: Optional[str] = None,
     status: Optional[AgentStatus] = None
 ):
     """에이전트 목록 조회"""
-    agents = await redis_client.list_agents(role, status)
-    
-    return {
-        "agents": agents,
-        "total": len(agents),
-        "timestamp": time.time()
-    }
+    try:
+        agents = await redis_client.list_agents(role, status)
+        return {
+            "agents": agents,
+            "total": len(agents),
+            "timestamp": time.time()
+        }
+    except Exception as e:
+        logging.error(f"에이전트 목록 조회 오류: {str(e)}")
+        return {
+            "agents": [],
+            "total": 0,
+            "timestamp": time.time()
+        }
 
-@app.get("/agents/by-role/{role}", response_model=ApiResponse, tags=["에이전트 관리"])
+@app.get("/agents/by-role/{role}", response_model=List[Agent], tags=["에이전트 조회"])
 async def get_agents_by_role(
     role: str, 
-    status: Optional[str] = None,
-    max_load: float = 1.0
+    status: Optional[str] = Query(None), 
+    max_load: Optional[float] = Query(None)
 ):
-    """특정 역할의 사용 가능한 에이전트 목록 반환"""
+    """역할별 에이전트 목록 조회"""
     try:
-        agents = redis_client.get_agents_by_role(role, status, max_load)
-        
-        # 전체 에이전트 정보를 반환 (파라미터 스키마 포함)
-        agent_list = [agent.dict() for agent in agents]
-        
-        return {
-            "status": "success",
-            "message": f"{len(agents)}개의 {role} 에이전트 조회 성공",
-            "agents": agent_list
-        }
+        # 올바른 비동기 호출 방식으로 수정
+        agents = await redis_client.get_agents_by_role(role, status, max_load)
+        return agents
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"에이전트 조회 오류: {str(e)}"
-        )
+        logging.error(f"역할별 에이전트 조회 중 오류: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"역할별 에이전트 조회 중 오류: {str(e)}")
 
-@app.get("/health", response_model=ApiResponse, tags=["시스템"])
+@app.get("/health", status_code=200)
 async def health_check():
-    """서비스 상태 확인"""
-    try:
-        # Redis 연결 확인
-        redis_time = redis_client.redis.time()
-        
-        # 등록된 에이전트 통계
-        roles = redis_client.redis.smembers("roles")
-        total_agents = redis_client.redis.scard("agents")
-        
-        role_stats = {}
-        for role in roles:
-            role_stats[role] = redis_client.redis.scard(f"role:{role}")
-        
-        return {
-            "status": "healthy",
-            "message": "Registry 서비스 정상 작동 중",
-            "data": {
-                "redis_time": redis_time[0],
-                "total_agents": total_agents,
-                "roles": role_stats
-            }
-        }
-    except Exception as e:
-        raise HTTPException(
-            status_code=500, 
-            detail=f"Registry 서비스 오류: {str(e)}"
-        )
+    """헬스체크 엔드포인트"""
+    return {"status": "ok"}
 
 @app.get("/agents/{agent_id}/statistics", response_model=AgentStatistics)
 async def get_agent_statistics(agent_id: str):
@@ -226,6 +266,77 @@ async def update_agent_task_statistics(
             status_code=500,
             detail=f"에이전트 통계 업데이트 오류: {str(e)}"
         )
+
+@app.post("/debug/redis-keys")
+async def debug_redis_keys():
+    """Redis에 저장된 모든 키를 조회"""
+    try:
+        all_keys = redis_client.redis.keys("*")
+        key_types = {}
+        
+        # 모든 키의 타입 확인
+        for key in all_keys:
+            key_types[key] = redis_client.redis.type(key)
+            
+        return {
+            "keys": all_keys,
+            "types": key_types,
+            "total": len(all_keys)
+        }
+    except Exception as e:
+        logging.error(f"Redis 키 디버깅 중 오류: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/unregister_direct", response_model=ApiResponse, tags=["에이전트 관리"])
+async def unregister_agent_direct(role: str = Query(...), agent_id: str = Query(...)):
+    """에이전트 등록 직접 해제 (백업 메서드)"""
+    try:
+        # 디버깅 정보 로깅
+        all_keys = redis_client.redis.keys("*")
+        logging.info(f"Redis 키 목록: {all_keys}")
+        
+        # 등록한 방식과 일치하게 해시에서 삭제
+        deleted_hash = redis_client.redis.hdel("agents", agent_id)
+        logging.info(f"해시 삭제 결과: {deleted_hash}")
+        
+        # 역할별 인덱스에서 삭제
+        deleted_role = redis_client.redis.srem(f"role:{role}", agent_id)
+        logging.info(f"역할 인덱스 삭제 결과: {deleted_role}")
+        
+        # 에이전트 ID 목록에서 삭제
+        deleted_id = redis_client.redis.srem("agent_ids", agent_id)
+        logging.info(f"ID 목록 삭제 결과: {deleted_id}")
+        
+        # TTL 키 삭제
+        deleted_ttl = redis_client.redis.delete(f"ttl:{agent_id}")
+        logging.info(f"TTL 키 삭제 결과: {deleted_ttl}")
+        
+        return {
+            "status": "success",
+            "message": f"에이전트 '{role}/{agent_id}' 등록 해제됨 (직접 삭제)"
+        }
+    except Exception as e:
+        logging.error(f"에이전트 직접 등록 해제 중 오류: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"에이전트 등록 해제 중 오류: {str(e)}")
+
+@app.post("/debug/agent-keys")
+async def debug_agent_keys():
+    """Redis에 저장된 에이전트 관련 모든 키 조회 (디버깅용)"""
+    try:
+        # 모든 키 패턴 조회
+        all_keys = redis_client.redis.keys("*agent*")
+        role_keys = redis_client.redis.keys("*role*")
+        status_keys = redis_client.redis.keys("*status*")
+        
+        return {
+            "agent_keys": all_keys,
+            "role_keys": role_keys,
+            "status_keys": status_keys,
+            "total_keys": len(all_keys) + len(role_keys) + len(status_keys)
+        }
+    except Exception as e:
+        logging.error(f"키 디버깅 중 오류: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"키 디버깅 중 오류: {str(e)}")
 
 # 서비스 실행
 if __name__ == "__main__":

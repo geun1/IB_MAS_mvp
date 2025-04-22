@@ -1,0 +1,23 @@
+version: "3.8"
+
+services:
+    # 기존 서비스는 그대로 유지...
+
+    ui_dev:
+        build:
+            context: ./ui
+            dockerfile: Dockerfile.dev
+        ports:
+            - "5173:5173"
+        environment:
+            - VITE_API_BASE_URL=http://localhost:8001
+            - VITE_REGISTRY_URL=http://localhost:8000
+            - VITE_BROKER_URL=http://localhost:8002
+        volumes:
+            - ./ui:/app
+            - /app/node_modules
+        command: npm run dev -- --host
+        depends_on:
+            - orchestrator
+            - registry
+            - broker
