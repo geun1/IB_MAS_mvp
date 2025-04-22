@@ -21,8 +21,7 @@ class BrokerSettings(BaseSettings):
     
     # LLM 설정
     DEFAULT_LLM_MODEL: str = os.getenv("DEFAULT_LLM_MODEL", "gpt-4o-mini")
-    LLM_API_KEY: str = "***REMOVED***proj-Z9xpJQlE6j2LJqUNxWwFk1BrJwgaf6ai1Pase_qZdjBcNwUUqkW-z-iWlymnqON_WlLpXZL8J2T3BlbkFJFdDQE_PlQwnd9h8TQ7NpaZGBAB-ukoN88VWCh0aaS7KYdvKoRtXAJvviTF9inX_sEilr1c5rMA"
-
+    LLM_API_KEY: str = os.getenv("LLM_API_KEY", "")
     @property
     def rabbitmq_url(self) -> str:
         return f"amqp://{self.RABBITMQ_USER}:{self.RABBITMQ_PASS}@{self.RABBITMQ_HOST}:{self.RABBITMQ_PORT}/"
