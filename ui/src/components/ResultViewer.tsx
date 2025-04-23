@@ -29,152 +29,155 @@ const ResultViewer: React.FC<ResultViewerProps> = ({
         }
     });
 
-    // 선택된 태스크 ID (현재 보고 있는 태스크)
-    const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+    // 선택된 태스크 인덱스 (현재 보고 있는 태스크)
+    const [selectedTaskIndex, setSelectedTaskIndex] = useState<number | null>(
+        null
+    );
 
-    // 대화 ID로 태스크 조회 (변경)
+    // 대화 ID로 태스크 목록을 조회
     const {
-        data: tasksData,
-        isLoading: isLoadingTasks,
-        error: tasksError,
+        data: conversationTasks,
+        isLoading: isLoadingConversationTasks,
+        error: conversationTasksError,
     } = useQuery(
         ["tasks-by-conversation", taskId],
-        () => brokerApi.getTasksByConversation(taskId || ""),
+        () => brokerApi.getTasksByConversation(taskId || "", 1, 10),
         {
             enabled: !!taskId,
             refetchInterval: taskId ? 2000 : false,
         }
     );
 
-    // 첫 번째 태스크를 선택
+    // 태스크 목록에서 첫 번째 태스크 또는 완료된 태스크를 선택
     useEffect(() => {
-        if (tasksData?.tasks?.length > 0) {
-            setSelectedTaskId(tasksData.tasks[0].task_id);
-        }
-    }, [tasksData]);
+        if (conversationTasks?.tasks && conversationTasks.tasks.length > 0) {
+            console.log("태스크 목록:", conversationTasks.tasks);
 
-    // 태스크 결과 조회
-    const {
-        data: taskDetails,
-        isLoading: isLoadingTask,
-        error: taskError,
-    } = useQuery(
-        ["task", selectedTaskId],
-        () => brokerApi.getTask(selectedTaskId || ""),
-        {
-            enabled: !!selectedTaskId,
-            refetchInterval: selectedTaskId ? 2000 : false,
-        }
-    );
-
-    // 새로운 태스크가 선택되면 최근 목록에 추가
-    useEffect(() => {
-        if (taskId && typeof taskId === "string") {
-            setSelectedTaskId(taskId);
-
-            // 태스크 ID가 이미 목록에 있으면 제거하고 맨 앞에 추가
-            setRecentTaskIds((prev) => {
-                const newIds = [
-                    taskId,
-                    ...prev.filter((id) => id !== taskId),
-                ].slice(0, 10);
-                localStorage.setItem("recentTaskIds", JSON.stringify(newIds));
-                return newIds;
-            });
-        }
-    }, [taskId]);
-
-    // 태스크 결과 복사
-    const copyResult = () => {
-        if (taskDetails?.result) {
-            const resultText =
-                typeof taskDetails.result === "object"
-                    ? JSON.stringify(taskDetails.result, null, 2)
-                    : String(taskDetails.result);
-
-            navigator.clipboard.writeText(resultText).then(
-                () => alert("결과가 클립보드에 복사되었습니다."),
-                (err) => alert("복사 중 오류가 발생했습니다: " + err)
+            // 완료된 태스크가 있는지 확인
+            const completedTaskIndex = conversationTasks.tasks.findIndex(
+                (task) => task.status === "completed"
             );
+
+            // 완료된 태스크가 있으면 해당 태스크를, 없으면 첫 번째 태스크 선택
+            const newSelectedIndex =
+                completedTaskIndex >= 0 ? completedTaskIndex : 0;
+            setSelectedTaskIndex(newSelectedIndex);
+
+            // 최근 태스크 목록 업데이트 - 대화 ID 대신 실제 태스크 ID 저장
+            const taskId = conversationTasks.tasks[newSelectedIndex].task_id;
+            if (taskId) {
+                updateRecentTasks(taskId);
+            }
+        }
+    }, [conversationTasks]);
+
+    // 최근 태스크 목록 업데이트
+    const updateRecentTasks = (taskId: string) => {
+        setRecentTaskIds((prev) => {
+            const updated = [
+                taskId,
+                ...prev.filter((id) => id !== taskId),
+            ].slice(0, 5);
+            localStorage.setItem("recentTaskIds", JSON.stringify(updated));
+            return updated;
+        });
+    };
+
+    // 상태에 따른 스타일 반환
+    const getStatusStyle = (status: string) => {
+        switch (status) {
+            case "completed":
+                return "bg-green-100 text-green-800";
+            case "processing":
+                return "bg-blue-100 text-blue-800";
+            case "failed":
+                return "bg-red-100 text-red-800";
+            default:
+                return "bg-gray-100 text-gray-800";
         }
     };
 
-    // 태스크 결과 다운로드
-    const downloadResult = () => {
-        if (taskDetails?.result) {
-            const resultText =
-                typeof taskDetails.result === "object"
-                    ? JSON.stringify(taskDetails.result, null, 2)
-                    : String(taskDetails.result);
-
-            const blob = new Blob([resultText], { type: "application/json" });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement("a");
-            a.href = url;
-            a.download = `ta***REMOVED***result-${taskDetails.task_id}.json`;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-            URL.revokeObjectURL(url);
+    // 상태 텍스트 반환
+    const getStatusText = (status: string) => {
+        switch (status) {
+            case "completed":
+                return "완료";
+            case "processing":
+                return "처리 중";
+            case "failed":
+                return "실패";
+            default:
+                return "대기 중";
         }
     };
 
-    // 태스크 결과 표시
-    const renderTaskResult = (task: any) => {
-        if (!task) return null;
+    // 태스크 세부 정보 렌더링
+    const renderTaskDetails = () => {
+        // 태스크 목록이 있고 선택된 태스크 인덱스가 유효한 경우
+        if (
+            conversationTasks?.tasks &&
+            selectedTaskIndex !== null &&
+            selectedTaskIndex >= 0 &&
+            selectedTaskIndex < conversationTasks.tasks.length
+        ) {
+            const task = conversationTasks.tasks[selectedTaskIndex];
 
-        // 결과가 문자열인 경우
-        if (typeof task.result === "string") {
-            return <pre className="whitespace-pre-wrap">{task.result}</pre>;
-        }
-
-        // 결과가 객체인 경우
-        if (typeof task.result === "object") {
             return (
-                <pre className="whitespace-pre-wrap">
-                    {JSON.stringify(task.result, null, 2)}
-                </pre>
+                <div className="bg-white p-4 rounded-lg shadow-md">
+                    <h3 className="text-lg font-semibold">
+                        {task.role} 태스크 결과
+                    </h3>
+                    <div className="mt-2">
+                        <p
+                            className={`text-sm px-2 py-1 rounded inline-block ${getStatusStyle(
+                                task.status
+                            )}`}
+                        >
+                            {getStatusText(task.status)}
+                        </p>
+                    </div>
+                    {task.result && (
+                        <div className="mt-4 prose max-w-none">
+                            {typeof task.result === "string" ? (
+                                <div
+                                    dangerouslySetInnerHTML={{
+                                        __html: task.result,
+                                    }}
+                                />
+                            ) : task.result.content ? (
+                                <div
+                                    dangerouslySetInnerHTML={{
+                                        __html: task.result.content,
+                                    }}
+                                />
+                            ) : (
+                                <pre>
+                                    {JSON.stringify(task.result, null, 2)}
+                                </pre>
+                            )}
+                        </div>
+                    )}
+                </div>
             );
         }
 
-        // 결과가 없는 경우
-        return <p>결과가 없습니다.</p>;
+        return null;
     };
 
     // 태스크가 선택되지 않은 경우
-    if (!selectedTaskId && !taskId) {
+    if (!taskId && recentTaskIds.length === 0) {
         return (
             <div className={`bg-white rounded-lg shadow-md p-6 ${className}`}>
                 <h2 className="text-xl font-bold mb-4">태스크 결과</h2>
-
-                {recentTaskIds.length > 0 ? (
-                    <>
-                        <p className="text-gray-500 mb-2">최근 태스크 결과:</p>
-                        <ul className="space-y-2">
-                            {recentTaskIds.map((id) => (
-                                <li key={id}>
-                                    <button
-                                        onClick={() => setSelectedTaskId(id)}
-                                        className="text-blue-600 hover:text-blue-800 text-sm"
-                                    >
-                                        {/* 이미 문자열임이 보장됨 */}
-                                        태스크 {id.slice(0, 8)}...
-                                    </button>
-                                </li>
-                            ))}
-                        </ul>
-                    </>
-                ) : (
-                    <p className="text-gray-500">
-                        표시할 결과가 없습니다. 새로운 요청을 생성해주세요.
-                    </p>
-                )}
+                <p className="text-gray-500">
+                    표시할 결과가 없습니다. 새로운 요청을 생성해주세요.
+                </p>
             </div>
         );
     }
 
     // 로딩 중인 경우
-    if (isLoadingTask) {
+    if (isLoadingConversationTasks) {
         return (
             <div className={`bg-white rounded-lg shadow-md p-6 ${className}`}>
                 <h2 className="text-xl font-bold mb-4">태스크 결과</h2>
@@ -187,7 +190,7 @@ const ResultViewer: React.FC<ResultViewerProps> = ({
     }
 
     // 오류가 있는 경우
-    if (taskError || !taskDetails) {
+    if (conversationTasksError) {
         return (
             <div className={`bg-white rounded-lg shadow-md p-6 ${className}`}>
                 <h2 className="text-xl font-bold mb-4">태스크 결과</h2>
@@ -203,152 +206,35 @@ const ResultViewer: React.FC<ResultViewerProps> = ({
             <div className="flex justify-between items-start mb-4">
                 <h2 className="text-xl font-bold">태스크 결과</h2>
 
-                {/* 히스토리 드롭다운 */}
-                {recentTaskIds.length > 0 && (
-                    <div className="relative">
-                        <select
-                            value={selectedTaskId || taskId || ""}
-                            onChange={(e) => setSelectedTaskId(e.target.value)}
-                            className="block appearance-none bg-white border border-gray-300 hover:border-gray-400 px-4 py-2 rounded-md shadow-sm text-sm leading-tight focus:outline-none focus:shadow-outline"
-                        >
-                            {recentTaskIds.map((id) => (
-                                <option key={id} value={id}>
-                                    {id.substring(0, 8)}...
-                                </option>
-                            ))}
-                        </select>
-                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-700">
-                            <svg
-                                className="h-4 w-4"
-                                xmlns="http://www.w3.org/2000/svg"
-                                viewBox="0 0 20 20"
-                                fill="currentColor"
+                {/* 다른 태스크 선택 드롭다운 */}
+                {conversationTasks?.tasks &&
+                    conversationTasks.tasks.length > 1 && (
+                        <div className="relative inline-block text-left">
+                            <select
+                                className="block w-full py-2 px-3 border border-gray-300 bg-white rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 text-sm"
+                                value={
+                                    selectedTaskIndex !== null
+                                        ? selectedTaskIndex
+                                        : 0
+                                }
+                                onChange={(e) =>
+                                    setSelectedTaskIndex(Number(e.target.value))
+                                }
                             >
-                                <path
-                                    fillRule="evenodd"
-                                    d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-                                    clipRule="evenodd"
-                                />
-                            </svg>
-                        </div>
-                    </div>
-                )}
-            </div>
-
-            {/* 태스크 상태 */}
-            <div className="mb-4 flex items-center">
-                <span
-                    className={`inline-block w-3 h-3 rounded-full mr-2 ${
-                        taskDetails.status === TaskStatus.COMPLETED
-                            ? "bg-green-500"
-                            : taskDetails.status === TaskStatus.FAILED
-                            ? "bg-red-500"
-                            : taskDetails.status === TaskStatus.PROCESSING
-                            ? "bg-blue-500"
-                            : "bg-gray-500"
-                    }`}
-                ></span>
-                <span className="text-sm text-gray-600">
-                    {taskDetails.status === TaskStatus.COMPLETED
-                        ? "완료됨"
-                        : taskDetails.status === TaskStatus.FAILED
-                        ? "실패함"
-                        : taskDetails.status === TaskStatus.PROCESSING
-                        ? "처리 중"
-                        : taskDetails.status === TaskStatus.PENDING
-                        ? "대기 중"
-                        : "취소됨"}
-                </span>
-
-                {/* 복사 및 다운로드 버튼 (결과가 있을 때만) */}
-                {taskDetails.result && (
-                    <div className="ml-auto space-x-2">
-                        <button
-                            onClick={copyResult}
-                            className="text-sm text-blue-600 hover:text-blue-800"
-                            title="결과 복사"
-                        >
-                            복사
-                        </button>
-                        <button
-                            onClick={downloadResult}
-                            className="text-sm text-blue-600 hover:text-blue-800"
-                            title="결과 다운로드"
-                        >
-                            다운로드
-                        </button>
-                    </div>
-                )}
-            </div>
-
-            {/* 결과 컨테이너 */}
-            <div className="mt-4 border rounded-md overflow-hidden">
-                {taskDetails.status === TaskStatus.COMPLETED ? (
-                    <div className="max-h-80 overflow-y-auto p-4">
-                        {renderTaskResult(taskDetails)}
-                    </div>
-                ) : taskDetails.status === TaskStatus.FAILED ? (
-                    <div className="bg-red-50 p-4 text-red-700">
-                        <p className="font-medium">오류 발생:</p>
-                        <p className="mt-1">
-                            {taskDetails.error ||
-                                "알 수 없는 오류가 발생했습니다."}
-                        </p>
-                    </div>
-                ) : (
-                    <div className="bg-gray-50 p-8 text-center text-gray-500">
-                        <p>태스크 처리 중입니다. 결과가 곧 표시됩니다.</p>
-                        <div className="mt-4 flex justify-center">
-                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-                        </div>
-                    </div>
-                )}
-            </div>
-
-            {/* 태스크 정보 */}
-            <div className="mt-4 text-xs text-gray-500">
-                <div className="grid grid-cols-2 gap-2">
-                    <div>
-                        <span className="font-medium">태스크 ID:</span>{" "}
-                        <span className="font-mono">{taskDetails.task_id}</span>
-                    </div>
-                    <div>
-                        <span className="font-medium">역할:</span>{" "}
-                        {taskDetails.role}
-                    </div>
-                    <div>
-                        <span className="font-medium">생성 시간:</span>{" "}
-                        {new Date(
-                            taskDetails.created_at * 1000
-                        ).toLocaleString()}
-                    </div>
-                    {taskDetails.completed_at && (
-                        <div>
-                            <span className="font-medium">완료 시간:</span>{" "}
-                            {new Date(
-                                taskDetails.completed_at * 1000
-                            ).toLocaleString()}
+                                {conversationTasks.tasks.map((task, index) => (
+                                    <option key={task.task_id} value={index}>
+                                        {task.role} (
+                                        {getStatusText(task.status)})
+                                    </option>
+                                ))}
+                            </select>
                         </div>
                     )}
-                </div>
             </div>
+
+            {renderTaskDetails()}
         </div>
     );
-};
-
-// 로컬 스토리지에서 태스크 ID 목록을 가져올 때도 문자열 확인
-const getStoredTaskIds = (): string[] => {
-    try {
-        const stored = localStorage.getItem("recentTaskIds");
-        const parsed = stored ? JSON.parse(stored) : [];
-        // 문자열인 항목만 필터링
-        return Array.isArray(parsed)
-            ? parsed.filter((id) => typeof id === "string")
-            : [];
-    } catch (error) {
-        console.error("태스크 ID 목록 로드 중 오류:", error);
-        return [];
-    }
 };
 
 export default ResultViewer;

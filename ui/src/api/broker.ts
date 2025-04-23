@@ -50,10 +50,17 @@ export const brokerApi = {
         page: number = 1,
         pageSize: number = 20
     ): Promise<TaskList> => {
-        const response = await apiClient.get(
-            `${BASE_URL}/tasks/by-conversation/${conversationId}`,
-            { params: { page, page_size: pageSize } }
-        );
-        return response.data;
+        try {
+            console.log(`대화 ID로 태스크 목록 조회: ${conversationId}`);
+            const response = await apiClient.get(
+                `${BASE_URL}/tasks/by-conversation/${conversationId}`,
+                { params: { page, page_size: pageSize } }
+            );
+            console.log("브로커 응답:", response.data);
+            return response.data;
+        } catch (error) {
+            console.error("태스크 목록 조회 오류:", error);
+            throw error;
+        }
     },
 };
