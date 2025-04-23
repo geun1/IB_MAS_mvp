@@ -12,6 +12,19 @@ class AgentClient:
     
     async def execute_task(self, endpoint: str, task_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """에이전트 호출 및 결과 반환"""
+        # 원래 엔드포인트 로깅
+        self.logger.info(f"원래 엔드포인트: {endpoint}")
+        
+        # 엔드포인트 수정 로직
+        if endpoint.endswith(':8000'):
+            endpoint = f"{endpoint}/run"
+        elif not endpoint.endswith('/run'):
+            # URL의 마지막에 /run이 없으면 추가
+            endpoint = f"{endpoint}/run"
+        
+        # 수정된 엔드포인트 로깅
+        self.logger.info(f"수정된 엔드포인트: {endpoint}")
+        
         for attempt in range(self.max_retries + 1):
             try:
                 self.logger.info(f"에이전트 호출 시도 ({attempt+1}/{self.max_retries+1}): {endpoint}")

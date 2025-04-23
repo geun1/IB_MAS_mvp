@@ -19,3 +19,10 @@ class TaskRouter:
         candidates = [a for a in agents if a.load == min_load]
         
         return random.choice(candidates) if candidates else None 
+
+def get_agent_url(agent_info):
+    base_url = f"http://{agent_info['host']}:{agent_info['port']}"
+    # 엔드포인트가 이미 포함되어 있는지 확인
+    if "/run" not in base_url:
+        return f"{base_url}/run"
+    return base_url 

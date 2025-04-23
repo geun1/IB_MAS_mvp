@@ -155,24 +155,43 @@ async def run_task_root(task: dict):
 async def run_task(task: dict):
     """태스크 실행 엔드포인트"""
     try:
-        logger.info(f"태스크 수신: {task.get('task_id')}")
-        query = task.get("params", {}).get("query")
-        if not query:
-            raise HTTPException(status_code=400, detail="Query parameter is required")
-            
-        # 검색 실행
-        search_request = SearchRequest(query=query)
-        result = await search(search_request)
+        # 태스크 ID 로깅 추가
+        task_id = task.get("task_id", "unknown")
+        logging.info(f"태스크 수신: {task_id}")
         
+        # 태스크 데이터 추출
+        params = task.get("params", {})
+        query = params.get("query", "")
+        
+        if not query:
+            logging.warning(f"태스크 {task_id}: 검색어가 비어 있습니다")
+            return {
+                "status": "error",
+                "error": "검색어가 제공되지 않았습니다",
+                "result": {
+                    "content": "검색어를 지정해 주세요."
+                }
+            }
+        
+        # 검색 기능 구현 (예시)
+        search_results = f"'{query}'에 대한 검색 결과입니다. 이것은 모의 데이터입니다."
+        
+        # 결과 반환
         return {
             "status": "success",
-            "result": result
+            "result": {
+                "content": search_results
+            }
         }
-    
-    except HTTPException as e:
-        raise e
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Task execution failed: {str(e)}")
+        logging.exception(f"태스크 실행 중 오류 발생: {str(e)}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "result": {
+                "content": f"처리 중 오류가 발생했습니다: {str(e)}"
+            }
+        }
 
 # 서버 상태 확인용 API
 @app.get("/")

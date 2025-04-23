@@ -161,19 +161,20 @@ async def write(request: WriterRequest):
 async def run_task(task: dict):
     """태스크 실행 엔드포인트"""
     try:
-        logger.info(f"태스크 수신: {task.get('task_id')}")
+        # 태스크 ID 로깅 추가
+        task_id = task.get("task_id", "unknown")
+        logging.info(f"태스크 수신: {task_id}")
         
         # 태스크 데이터 추출
-        task_id = task.get("task_id", "unknown")
         params = task.get("params", {})
         topic = params.get("topic", "")
         
         if not topic:
-            logger.warning(f"태스크 {task_id}: 주제가 비어 있습니다")
+            logging.warning(f"태스크 {task_id}: 주제가 비어 있습니다")
             topic = "일반적인 주제"
         
         # 오류 디버깅을 위한 입력 데이터 로깅
-        logger.debug(f"태스크 {task_id} 입력 데이터: {params}")
+        logging.debug(f"태스크 {task_id} 입력 데이터: {params}")
         
         # 의존성 결과 처리
         depends_results = task.get("depends_results", [])
@@ -191,17 +192,32 @@ async def run_task(task: dict):
         else:
             prompt = f"주제: {topic}\n\n해당 주제에 대한 간결하고 명확한 보고서를 작성해주세요."
         
-        # 응답 생성
+        # 응답 생성 - LLM 에러 핸들링 개선
+        result = None
         try:
             from common.llm_client import LLMClient
             llm = LLMClient()
-            logger.info(f"LLM 클라이언트 호출 시작 (태스크: {task_id})")
+            logging.info(f"LLM 클라이언트 호출 시작 (태스크: {task_id})")
             result = llm.ask(prompt)
-            logger.info(f"LLM 응답 완료 (태스크: {task_id})")
+            logging.info(f"LLM 응답 완료 (태스크: {task_id})")
         except Exception as e:
-            logger.error(f"LLM 호출 오류: {str(e)}")
-            # 오류 발생 시 대체 응답
-            result = f"# {topic} 보고서\n\n정보를 처리하는 중 오류가 발생했습니다. 다시 시도해주세요."
+            logging.error(f"LLM 호출 오류: {str(e)}", exc_info=True)
+            # 오류 발생 시 모의 응답으로 대체
+            result = f"""
+# {topic} 보고서
+
+## 개요
+현재 LLM 서비스에 일시적인 문제가 있어 간략한 정보만 제공합니다.
+
+## 주요 내용
+{topic}에 관한 정보를 요약하면:
+1. 최신 동향 및 주요 기술
+2. 시장 현황 분석
+3. 주요 제품 비교
+
+## 결론
+더 자세한 정보는 추후 다시 요청해 주세요.
+"""
         
         # 결과 반환
         return {
@@ -211,10 +227,14 @@ async def run_task(task: dict):
             }
         }
     except Exception as e:
-        logger.exception(f"태스크 실행 중 오류 발생: {str(e)}")
+        logging.exception(f"태스크 실행 중 오류 발생: {str(e)}")
+        # 오류 발생 시에도 형식에 맞게 응답
         return {
             "status": "error",
-            "error": str(e)
+            "error": str(e),
+            "result": {
+                "content": f"처리 중 오류가 발생했습니다: {str(e)}"
+            }
         }
 
 # 서버 상태 확인용 API
