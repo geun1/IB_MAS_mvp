@@ -29,7 +29,7 @@ class LLMClient:
         LLMClient 초기화
         
         Args:
-            default_model: 기본 사용할 모델명 (예: "gpt-3.5-turbo", "claude-3-sonnet-20240229")
+            default_model: 기본 사용할 모델명 (예: "gpt-4o-mini", "claude-3-sonnet-20240229")
             api_key: API 키 (기본값은 환경변수에서 가져옴)
             temperature: 생성 랜덤성 (0에 가까울수록 결정적)
             max_tokens: 최대 생성 토큰 수

@@ -7,6 +7,7 @@ usage() {
   echo "  all       - 모든 에이전트 시작"
   echo "  web_search - Web Search 에이전트만 시작"
   echo "  writer    - Writer 에이전트만 시작"
+  echo "  code_generator - Code Generator 에이전트만 시작"
   echo "  stop      - 모든 에이전트 중지"
   echo "  status    - 에이전트 상태 확인"
   exit 1
@@ -30,6 +31,10 @@ case "$1" in
   writer)
     echo "Writer 에이전트를 시작합니다..."
     cd writer && docker-compose up 
+    ;;
+  code_generator)
+    echo "Code Generator 에이전트를 시작합니다..."
+    cd code_generator && docker-compose up 
     ;;
   stop)
     echo "모든 에이전트를 중지합니다..."

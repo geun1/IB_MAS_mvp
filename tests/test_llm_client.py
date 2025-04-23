@@ -256,7 +256,7 @@ class TestLLMClient(unittest.TestCase):
     def test_ask_with_different_models(self, mock_completion):
         """ask 메서드로 다양한 모델 호출 테스트"""
         models_to_test = [
-            "gpt-3.5-turbo",
+            "gpt-4o-mini",
             "gpt-4",
             "claude-3-sonnet-20240229",
             "claude-3-opus-20240229",

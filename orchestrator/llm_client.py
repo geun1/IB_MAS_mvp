@@ -42,7 +42,7 @@ class OrchestratorLLMClient:
         self.client = LLMClient()
         self.model = LLM_MODEL
         self.fallback_models = [
-            "gpt-3.5-turbo", 
+            "gpt-4o-mini", 
             "ollama/llama3:latest",
             "ollama/mistral:latest"
         ]  # 여러 대체 모델 설정
