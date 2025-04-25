@@ -161,38 +161,87 @@ async def write(request: WriterRequest):
 async def run_task(task: dict):
     """태스크 실행 엔드포인트"""
     try:
-        # 태스크 ID 로깅 추가
+        # 태스크 ID 추출 및 로깅
         task_id = task.get("task_id", "unknown")
         logging.info(f"태스크 수신: {task_id}")
+        
+        # 전체 태스크 구조 상세 로깅
+        logging.debug(f"태스크 전체 구조: {json.dumps(task, indent=2)}")
         
         # 태스크 데이터 추출
         params = task.get("params", {})
         topic = params.get("topic", "")
         
-        if not topic:
-            logging.warning(f"태스크 {task_id}: 주제가 비어 있습니다")
-            topic = "일반적인 주제"
-        
-        # 오류 디버깅을 위한 입력 데이터 로깅
-        logging.debug(f"태스크 {task_id} 입력 데이터: {params}")
-        
-        # 의존성 결과 처리
+        # 의존성 결과 처리 - 더 상세한 로깅
         depends_results = task.get("depends_results", [])
-        reference_text = ""
+        if "context" in task and isinstance(task["context"], dict):
+            # context 필드를 통해 전달된 경우
+            context_depends = task["context"].get("depends_results", [])
+            if context_depends:
+                logging.info(f"컨텍스트를 통해 의존성 데이터 수신: {len(context_depends)}개")
+                depends_results = context_depends
+        
+        logging.info(f"의존성 데이터 수신: {len(depends_results)}개의 의존 태스크 결과")
+        
+        # 의존성 데이터 상세 로깅
+        for i, dep_result in enumerate(depends_results):
+            if isinstance(dep_result, dict):
+                logging.info(f"의존성 데이터 {i+1} 구조: {list(dep_result.keys())}")
+                if "result" in dep_result and isinstance(dep_result["result"], dict):
+                    logging.info(f"  - result 필드 구조: {list(dep_result['result'].keys())}")
+            else:
+                logging.info(f"의존성 데이터 {i+1} 타입: {type(dep_result)}")
+        
+        # 코드 생성 결과 추출 및 활용
+        code_content = ""
+        code_explanation = ""
         
         for dep_result in depends_results:
             if dep_result and isinstance(dep_result, dict):
-                content = dep_result.get("content", "")
-                if content:
-                    reference_text += f"{content}\n\n"
+                # 코드 생성 에이전트의 결과인 경우
+                if "code_files" in dep_result:
+                    logging.info(f"코드 파일 발견: {list(dep_result['code_files'].keys())}")
+                    for filename, code in dep_result["code_files"].items():
+                        code_content += f"## {filename}\n```python\n{code}\n```\n\n"
+                elif "result" in dep_result and isinstance(dep_result["result"], dict) and "code_files" in dep_result["result"]:
+                    # 다른 구조로 중첩된 경우
+                    logging.info(f"중첩된 구조에서 코드 파일 발견: {list(dep_result['result']['code_files'].keys())}")
+                    for filename, code in dep_result["result"]["code_files"].items():
+                        code_content += f"## {filename}\n```python\n{code}\n```\n\n"
+                elif "content" in dep_result:
+                    # 단순 텍스트 콘텐츠인 경우
+                    logging.info("텍스트 콘텐츠 발견, 길이: " + str(len(dep_result["content"])))
+                    code_content += dep_result["content"] + "\n\n"
+                elif "result" in dep_result and isinstance(dep_result["result"], dict) and "content" in dep_result["result"]:
+                    # 중첩된 콘텐츠
+                    logging.info("중첩된 텍스트 콘텐츠 발견, 길이: " + str(len(dep_result["result"]["content"])))
+                    code_content += dep_result["result"]["content"] + "\n\n"
+        
+        # 참조 텍스트가 있으면 프롬프트에 추가
+        reference_text = code_content if code_content else ""
+        if reference_text:
+            logging.info(f"참조 텍스트가 프롬프트에 추가됨 (길이: {len(reference_text)})")
         
         # 프롬프트 구성
-        if reference_text:
-            prompt = f"주제: {topic}\n\n참고 자료:\n{reference_text}\n\n위 정보를 바탕으로 간결하고 명확한 보고서를 작성해주세요."
-        else:
-            prompt = f"주제: {topic}\n\n해당 주제에 대한 간결하고 명확한 보고서를 작성해주세요."
+        if not topic:
+            logging.warning(f"태스크 {task_id}: 주제가 비어 있습니다")
+            return {
+                "status": "error",
+                "error": "주제가 제공되지 않았습니다",
+                "result": {
+                    "content": "작성할 주제를 지정해 주세요."
+                }
+            }
         
-        # 응답 생성 - LLM 에러 핸들링 개선
+        # 프롬프트 내용 통합
+        prompt = f"주제: {topic}\n\n"
+        if reference_text:
+            prompt += f"참고 자료 및 코드:\n{reference_text}\n\n"
+        prompt += "위 정보를 바탕으로 명확하고 구조화된 보고서를 작성해주세요."
+        
+        logging.info(f"최종 프롬프트 길이: {len(prompt)}")
+        
+        # LLM 호출 또는 모의 응답 생성
         result = None
         try:
             from common.llm_client import LLMClient
@@ -204,22 +253,17 @@ async def run_task(task: dict):
             logging.error(f"LLM 호출 오류: {str(e)}", exc_info=True)
             # 오류 발생 시 모의 응답으로 대체
             result = f"""
-# {topic} 보고서
+# {topic}
 
-## 개요
-현재 LLM 서비스에 일시적인 문제가 있어 간략한 정보만 제공합니다.
+## 오류 알림
+LLM 서비스 연결에 문제가 발생했습니다. 잠시 후 다시 시도해 주세요.
 
-## 주요 내용
-{topic}에 관한 정보를 요약하면:
-1. 최신 동향 및 주요 기술
-2. 시장 현황 분석
-3. 주요 제품 비교
-
-## 결론
-더 자세한 정보는 추후 다시 요청해 주세요.
+## 참고 자료 요약
+{reference_text[:500]}...
 """
         
         # 결과 반환
+        logging.info(f"태스크 {task_id} 완료, 응답 길이: {len(result)}")
         return {
             "status": "success",
             "result": {

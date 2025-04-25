@@ -16,6 +16,7 @@ logger.info("환경 변수 로드 완료")
 # API 설정
 REGISTRY_URL = os.getenv("REGISTRY_URL", "http://registry:8000")
 BROKER_URL = os.getenv("BROKER_URL", "http://broker:8002")
+REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 
 # LLM 설정
 # LLM_API_KEY = os.getenv("OPENAI_API_KEY", os.getenv("LLM_API_KEY", ""))
@@ -34,3 +35,17 @@ LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 # 태스크 설정
 DEFAULT_TASK_TIMEOUT = int(os.getenv("DEFAULT_TASK_TIMEOUT", "300"))  # 초 단위
 MAX_PARALLEL_TASKS = int(os.getenv("MAX_PARALLEL_TASKS", "5")) 
+
+# 실행 환경 설정
+def get_execution_context() -> Dict[str, Any]:
+    """
+    실행 환경 정보 반환
+    
+    Returns:
+        Dict[str, Any]: 환경 정보 딕셔너리
+    """
+    return {
+        "environment": os.getenv("ENVIRONMENT", "production"),
+        "version": os.getenv("VERSION", "0.1.0"),
+        "development_mode": DEBUG,
+    } 

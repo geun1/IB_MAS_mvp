@@ -14,16 +14,51 @@ export const orchestratorApi = {
     getConversationStatus: async (
         conversationId: string
     ): Promise<QueryResponse> => {
-        const response = await apiClient.get(
-            `${BASE_URL}/conversation/${conversationId}`
-        );
-        return response.data;
+        try {
+            const response = await apiClient.get(
+                `${BASE_URL}/conversations/${conversationId}`
+            );
+            return response.data;
+        } catch (error) {
+            console.error(
+                `대화 ID(${conversationId}) 상태 조회 중 오류:`,
+                error
+            );
+            throw error;
+        }
     },
 
     // 서비스 상태 확인
     checkHealth: async (): Promise<any> => {
         const response = await apiClient.get(`${BASE_URL}/health`);
         return response.data;
+    },
+
+    // 대화 목록 조회
+    listConversations: async (): Promise<any[]> => {
+        try {
+            const response = await apiClient.get(`${BASE_URL}/conversations`);
+            return response.data.conversations || [];
+        } catch (error) {
+            console.error("대화 목록 조회 중 오류:", error);
+            return [];
+        }
+    },
+
+    // 대화 상세 정보 조회
+    getConversationDetail: async (conversationId: string): Promise<any> => {
+        try {
+            const response = await apiClient.get(
+                `${BASE_URL}/conversations/${conversationId}/detail`
+            );
+            return response.data;
+        } catch (error) {
+            console.error(
+                `대화 상세 정보 조회 중 오류 (ID: ${conversationId}):`,
+                error
+            );
+            throw error;
+        }
     },
 };
 

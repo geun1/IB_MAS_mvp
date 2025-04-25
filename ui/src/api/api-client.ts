@@ -3,7 +3,7 @@ import axios, { AxiosRequestConfig, AxiosResponse } from "axios";
 // 기본 API 클라이언트 설정
 const apiClient = axios.create({
     baseURL: import.meta.env.VITE_API_BASE_URL || "", // 환경변수 추가
-    timeout: 30000, // 30초 타임아웃
+    timeout: 60000, // 30초 타임아웃
     headers: {
         "Content-Type": "application/json",
     },

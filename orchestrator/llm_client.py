@@ -4,7 +4,7 @@ LLM API 호출 관리를 위한 클라이언트
 import logging
 import json
 import os
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Union
 
 # 공통 LLM 클라이언트 임포트
 from common.llm_client import LLMClient
@@ -154,68 +154,46 @@ class OrchestratorLLMClient:
         # JSON이 완전하지 않은 경우
         raise ValueError("유효한 JSON 구조를 찾을 수 없습니다")
     
-    async def integrate_results(
-        self, 
-        original_query: str, 
-        results: List[Dict[str, Any]]
-    ) -> str:
+    async def integrate_results(self, original_query: str, tasks_results: str) -> Union[Dict[str, Any], str]:
         """
-        여러 태스크의 결과를 통합하여 최종 응답 생성
+        LLM을 사용하여 태스크 결과를 통합
         
         Args:
-            original_query: 원래 사용자 질의
-            results: 태스크 결과 목록
+            original_query: 원본 사용자 질의
+            tasks_results: 태스크 결과 텍스트
             
         Returns:
-            통합된 최종 응답
+            통합된 결과 (딕셔너리 또는 문자열)
         """
         try:
-            # 태스크 결과 문자열 구성
-            tasks_results_str = ""
-            for i, result in enumerate(results):
-                status = result.get("status", "unknown")
-                if status == "completed":
-                    task_desc = result.get("task_description", f"태스크 {i+1}")
-                    content = result.get("result", {}).get("content", "결과 없음")
-                    tasks_results_str += f"### 태스크 {i+1}: {task_desc}\n상태: 성공\n\n{content}\n\n"
-                else:
-                    tasks_results_str += f"### 태스크 {i+1}\n상태: {status} (실패 또는 미완료)\n\n"
+            logger.info("LLM API 호출: 결과 통합")
             
-            # 결과가 없으면 기본 메시지 반환
-            if not tasks_results_str:
-                return "모든 태스크가 실패했거나 결과가 없습니다."
+            # 결과 통합 프롬프트 생성
+            prompt = create_result_integration_prompt(original_query, tasks_results)
             
-            # 프롬프트 생성
-            prompt = create_result_integration_prompt(original_query, tasks_results_str)
+            # LLM으로 결과 통합 요청
+            models_to_try = [self.model] + self.fallback_models
             
-            # API 호출
-            logger.info(f"LLM API 호출: 결과 통합 (쿼리: {original_query[:50]}...)")
-            try:
-                # 기본 모델로 시도
-                response = self.client.ask(prompt, model=self.model, temperature=self.temperature)
-            except Exception as e:
-                logger.warning(f"기본 모델({self.model}) 호출 실패: {str(e)}")
-                logger.info(f"대체 모델({self.fallback_models[0]})로 재시도합니다.")
-                # 대체 모델로 재시도
-                response = self.client.ask(prompt, model=self.fallback_models[0], temperature=self.temperature)
-            
-            return response
-            
+            for model in models_to_try:
+                try:
+                    logger.info(f"모델 시도 중: {model}")
+                    response = self.client.ask(prompt, model=model, temperature=self.temperature)
+                    logger.info(f"모델 {model} 성공!")
+                    
+                    # 결과를 딕셔너리 형식으로 반환
+                    return {
+                        "message": response,
+                        "status": "success"
+                    }
+                    
+                except Exception as e:
+                    logger.warning(f"모델 {model}로 결과 통합 실패: {str(e)}")
+                    if model == models_to_try[-1]:  # 마지막 모델
+                        raise
+                
         except Exception as e:
             logger.error(f"결과 통합 중 오류 발생: {str(e)}")
-            
-            # 오류 발생 시 기본적으로 결과 연결
-            successful_results = []
-            for result in results:
-                if result.get("status") == "completed":
-                    content = result.get("result", {}).get("content", "")
-                    if content:
-                        successful_results.append(content)
-            
-            if not successful_results:
-                return "모든 태스크가 실패했거나 결과가 없습니다."
-            
-            return "\n\n---\n\n".join(successful_results)
+            raise
 
     async def test_connection(self):
         """LLM API 연결 테스트"""

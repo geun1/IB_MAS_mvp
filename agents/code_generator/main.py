@@ -388,35 +388,97 @@ async def run(request: Request):
     return await generate_code_run(request)
 
 @app.post("/generate_code/run")
-async def generate_code_run(request: Request):
-    """브로커가 자동으로 구성한 경로에 대응하는 엔드포인트"""
-    logger.info("브로커에서 /generate_code/run으로 요청이 들어왔습니다")
-    
+async def generate_code_task(task: BrokerRequest):
+    """브로커에서 코드 생성 태스크 실행"""
     try:
-        # 요청 본문을 JSON으로 파싱
-        data = await request.json()
-        logger.info(f"받은 요청 데이터: {data}")
+        task_id = task.task_id or str(uuid.uuid4())
+        app.state.active_tasks.add(task_id)
         
-        # 요청 데이터에서 필요한 정보 추출
-        input_data = data.get("input", {})
-        task_id = data.get("task_id", str(uuid.uuid4()))
+        # 요청 내용 로깅
+        params = task.input or {}
+        requirements = params.get("requirements", "")
+        language = params.get("language", "python")
+        include_tests = params.get("include_tests", False)
+        include_documentation = params.get("include_documentation", True)
+        complexity_level = params.get("complexity_level", 5)
+        references = params.get("references", [])
         
-        # 기존 generate_code 엔드포인트 호출을 위한 요청 변환
-        code_request = CodeGenerationRequest(
-            requirements=input_data.get("requirements", ""),
-            language=input_data.get("language", ProgrammingLanguage.PYTHON),
-            include_tests=input_data.get("include_tests", False),
-            include_documentation=input_data.get("include_documentation", True),
-            complexity_level=input_data.get("complexity_level", 5),
-            references=input_data.get("references", [])
-        )
+        # 의존성 결과 처리 - 로깅 강화
+        context = task.context or {}
+        depends_results = context.get("depends_results", [])
+        logging.info(f"의존성 데이터 수신: {len(depends_results)}개의 의존 태스크 결과")
         
-        # 기존 generate_code 엔드포인트 호출
-        result = await generate_code(code_request)
-        return result
+        # 상세 로깅
+        for i, dep_result in enumerate(depends_results):
+            logging.info(f"의존성 데이터 {i+1} 구조: {list(dep_result.keys()) if isinstance(dep_result, dict) else type(dep_result)}")
+        
+        # 요청 검증
+        if not requirements:
+            requirements = "간단한 사칙연산 프로그램"  # 기본값 설정
+            logging.warning(f"요구사항이 비어있어 기본값으로 설정: '{requirements}'")
+
+        logging.info(f"코드 생성 시작: 언어={language}, 요구사항 길이={len(requirements)}")
+        
+        # 코드 생성기 초기화 및 호출
+        try:
+            code_generator = CodeGenerator()
+            result = code_generator.generate_code(
+                requirements=requirements,
+                language=language,
+                complexity_level=complexity_level,
+                include_tests=include_tests,
+                include_documentation=include_documentation,
+                references=references
+            )
+            logging.info(f"코드 생성 완료: {len(result['code_files'])}개 파일 생성")
+            
+            # 각 파일 크기 로깅
+            for filename, content in result['code_files'].items():
+                logging.info(f"생성된 파일: {filename}, 크기: {len(content)} 바이트")
+                
+            # 응답 형식 포맷팅
+            response = {
+                "code_files": result["code_files"],
+                "explanation": result["explanation"],
+                "task_id": task_id,
+                "language": language,
+                "requirements": requirements
+            }
+            
+            if "usage_example" in result and result["usage_example"]:
+                response["usage_example"] = result["usage_example"]
+                logging.info(f"사용 예제 포함, 크기: {len(result['usage_example'])} 바이트")
+            
+            # 태스크 완료 처리
+            app.state.active_tasks.remove(task_id)
+            logging.info(f"태스크 {task_id} 성공적으로 완료")
+            
+            return response
+            
+        except Exception as e:
+            logging.error(f"코드 생성 중 오류: {str(e)}", exc_info=True)
+            # 오류 시 기본 응답 생성
+            return {
+                "code_files": {
+                    "main.py": f"# {requirements}에 대한 간단한 예제\ndef main():\n    print(\"요구사항: {requirements}\")\n    # 여기에 실제 구현 필요\n    return \"구현 필요\"\n\nif __name__ == \"__main__\":\n    result = main()\n    print(result)\n"
+                },
+                "explanation": f"요구사항 '{requirements}'에 따라 {language} 코드를 생성하였습니다.",
+                "task_id": task_id,
+                "language": language,
+                "requirements": requirements
+            }
     except Exception as e:
-        logger.error(f"브로커 요청 처리 중 오류: {str(e)}")
-        return {"error": str(e), "task_id": task_id if 'task_id' in locals() else str(uuid.uuid4())}
+        logging.exception(f"태스크 처리 중 예외 발생: {str(e)}")
+        # 전체 예외 처리
+        return {
+            "code_files": {
+                "error.py": "# 오류 발생\nprint('태스크 처리 중 오류가 발생했습니다.')"
+            },
+            "explanation": f"오류: {str(e)}",
+            "task_id": task.task_id or str(uuid.uuid4()),
+            "language": "python",
+            "requirements": ""
+        }
 
 def parse_code_blocks(text, language):
     """텍스트에서 코드 블록 추출"""

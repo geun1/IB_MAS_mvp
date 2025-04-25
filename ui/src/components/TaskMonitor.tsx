@@ -80,7 +80,8 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
 
             {/* 개별 태스크 목록 */}
             <div className="space-y-2">
-                {conversation.tasks.map((task: Task, index: number) => (
+                {/* tasks가 undefined인 경우 빈 배열로 대체 */}
+                {(conversation.tasks || []).map((task: Task, index: number) => (
                     <div
                         key={task.id || `ta***REMOVED***${index}`}
                         className="border rounded p-2 bg-gray-50"

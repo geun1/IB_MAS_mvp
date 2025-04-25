@@ -5,7 +5,8 @@ import logging
 import asyncio
 import time
 import uuid
-from typing import List, Dict, Any, Optional
+import json
+from typing import List, Dict, Any, Optional, Tuple
 
 from .models import Task, TaskDecomposition
 from .llm_client import OrchestratorLLMClient
@@ -18,107 +19,132 @@ logger = logging.getLogger(__name__)
 class TaskDecomposer:
     """사용자 요청을 여러 태스크로 분해하는 클래스"""
     
-    def __init__(self, llm_client: OrchestratorLLMClient, registry_client: RegistryClient):
+    def __init__(self, registry_client: RegistryClient, llm_client: OrchestratorLLMClient):
         """
         태스크 분해기 초기화
         
         Args:
-            llm_client: LLM 클라이언트
             registry_client: 레지스트리 클라이언트
+            llm_client: LLM 클라이언트
         """
-        self.llm_client = llm_client
         self.registry_client = registry_client
+        self.llm_client = llm_client
         logger.info("태스크 분해기 초기화 완료")
     
-    async def decompose_query(self, query: str, user_id: Optional[str] = None) -> Dict[str, Any]:
+    async def _get_agent_roles(self) -> List[Dict[str, Any]]:
         """
-        사용자 쿼리를 분석하여 태스크로 분해
+        사용 가능한 에이전트 역할 정보 조회
+        
+        Returns:
+            에이전트 역할 정보 목록
+        """
+        agents = await self.registry_client.get_all_agents()
+        agent_info = []
+        
+        for agent in agents:
+            agent_info.append({
+                "role": agent.role,
+                "description": agent.description,
+                "capabilities": [param.dict() for param in agent.params] if agent.params else []
+            })
+            
+        logger.info(f"{len(agent_info)}개의 에이전트 역할 정보 조회 완료")
+        return agent_info
+    
+    async def decompose_query(self, query: str, conversation_id: str = None, user_id: str = None) -> Tuple[List[Dict[str, Any]], List[List[int]]]:
+        """
+        쿼리를 태스크로 분해
         
         Args:
-            query: 사용자 요청 쿼리
+            query: 사용자 쿼리
+            conversation_id: 대화 ID
             user_id: 사용자 ID
             
         Returns:
-            분해된 태스크 정보 및 대화 ID가 포함된 딕셔너리
+            태스크 목록과 실행 레벨별 태스크 인덱스 목록의 튜플
         """
-        # 대화 ID 생성
-        conversation_id = f"conv_{int(time.time())}_{uuid.uuid4().hex[:8]}"
-        logger.info(f"새 대화 시작: {conversation_id} (사용자: {user_id or '익명'})")
+        logger.info(f"쿼리 분해 시작: '{query}'")
         
-        try:
-            # 레지스트리에서 역할 정보 가져오기
-            role_descriptions = await self.registry_client.generate_role_descriptions()
-            logger.info("에이전트 역할 정보 조회 완료")
-            
-            # LLM을 사용하여 태스크 분해
-            logger.info(f"쿼리 분해 시작: '{query[:50]}...'")
-            
-            try:
-                decomposition_result = await self.llm_client.decompose_tasks(query, role_descriptions)
-            except Exception as llm_error:
-                logger.error(f"LLM 호출 중 오류 발생: {str(llm_error)}")
-                # LLM 오류 시 기본 태스크 생성
-                return {
-                    "conversation_id": conversation_id,
-                    "original_query": query,
-                    "tasks": [{
-                        "role": "writer",
-                        "description": "기본 태스크 (LLM 오류 복구)",
-                        "params": {"topic": query},
-                        "depends_on": []
-                    }],
-                    "reasoning": "LLM 오류로 기본 태스크 생성"
-                }
-            
-            # 결과 파싱 및 태스크 객체 생성
-            tasks = []
-            raw_tasks = decomposition_result.get("tasks", [])
-            reasoning = decomposition_result.get("reasoning", "태스크 분해 로직 없음")
-            
-            for i, task_data in enumerate(raw_tasks):
-                # Task 모델 생성 전에 필수 필드 확인 및 기본값 설정
-                if "role" not in task_data:
-                    task_data["role"] = "writer"  # 기본 역할
+        # 에이전트 역할 정보 조회
+        agents_info = await self._get_agent_roles()
+        if not agents_info:
+            logger.warning("사용 가능한 에이전트가 없습니다")
+            return [], []
+        
+        # 역할별 에이전트 기능 사전 생성
+        agent_capabilities = {}
+        for agent in agents_info:
+            role = agent.get("role")
+            description = agent.get("description", "")
+            capabilities = agent.get("capabilities", [])
+            agent_capabilities[role] = {
+                "description": description,
+                "capabilities": capabilities
+            }
+        
+        logger.info("에이전트 역할 정보 조회 완료")
+        
+        # LLM을 사용하여 태스크 분해
+        roles_description = await self.registry_client.generate_role_descriptions()
+        decomposition_result = await self.llm_client.decompose_tasks(query, roles_description)
+        
+        # 태스크 목록 및 실행 레벨 추출
+        tasks = decomposition_result.get("tasks", [])
+        
+        # 의존성 그래프 구성 및 실행 레벨 결정
+        # 모든 태스크의 의존성 관계를 분석하여 실행 순서 결정
+        execution_levels = []
+        remaining = set(range(len(tasks)))
+        dependents = {i: set(task.get("depends_on", [])) for i, task in enumerate(tasks)}
+        
+        # 의존성이 없는 태스크부터 실행 레벨에 추가
+        while remaining:
+            current_level = []
+            for task_idx in list(remaining):
+                if all(dep not in remaining for dep in dependents[task_idx]):
+                    current_level.append(task_idx)
                     
-                if "description" not in task_data:
-                    task_data["description"] = f"태스크 {i+1}"
-                    
-                if "params" not in task_data:
-                    task_data["params"] = {"topic": query}
-                    
-                if "depends_on" not in task_data:
-                    task_data["depends_on"] = []
+            # 순환 의존성이 있는 경우 나머지 태스크 모두 추가
+            if not current_level:
+                logger.warning("순환 의존성 감지됨, 남은 태스크를 현재 레벨에 추가")
+                current_level = list(remaining)
                 
-                # 딕셔너리 형태로 저장 (Task 모델 대신)
-                tasks.append(task_data)
+            execution_levels.append(current_level)
+            remaining -= set(current_level)
+        
+        # 로깅 강화: 태스크 간 의존성 정보 출력
+        for level_idx, level in enumerate(execution_levels):
+            tasks_in_level = [tasks[idx]["description"] for idx in level]
+            logger.info(f"실행 레벨 {level_idx+1}: {tasks_in_level}")
+        
+        logger.info(f"쿼리 분해 완료: {len(tasks)}개의 태스크 생성됨")
+        return tasks, execution_levels
+        
+    async def _decompose_with_llm(self, query: str, agent_capabilities: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        LLM을 사용하여 쿼리를 태스크로 분해
+        
+        Args:
+            query: 사용자 쿼리
+            agent_capabilities: 에이전트 역할 및 기능 정보
             
-            logger.info(f"쿼리 분해 완료: {len(tasks)}개의 태스크 생성됨")
+        Returns:
+            분해된 태스크 정보
+        """
+        # 역할 정보 문자열 생성
+        roles_description = ""
+        for role, info in agent_capabilities.items():
+            description = info["description"]
+            roles_description += f"- {role}: {description}\n"
             
-            # 결과 반환
-            return {
-                "conversation_id": conversation_id,
-                "original_query": query,
-                "tasks": tasks,
-                "reasoning": reasoning
-            }
-            
-        except Exception as e:
-            logger.error(f"태스크 분해 중 오류 발생: {str(e)}")
-            
-            # 오류 발생 시 기본 태스크 생성
-            return {
-                "conversation_id": conversation_id,
-                "original_query": query,
-                "tasks": [{
-                    "role": "writer",
-                    "description": "기본 태스크 (오류 복구)",
-                    "params": {"topic": query},
-                    "depends_on": []
-                }],
-                "error": str(e),
-                "reasoning": "오류 발생으로 기본 태스크 생성"
-            }
-    
+            if info["capabilities"]:
+                caps = info["capabilities"]
+                roles_description += "  지원 기능: " + ", ".join(caps) + "\n"
+                
+        # LLM 호출
+        decomposition_result = await self.llm_client.decompose_tasks(query, roles_description)
+        return decomposition_result
+
     def analyze_dependencies(self, tasks: List[Task]) -> List[List[int]]:
         """
         태스크 의존성 분석 및 실행 레벨 결정
