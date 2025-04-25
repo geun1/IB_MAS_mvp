@@ -1,0 +1,8 @@
+fastapi>=0.95.0
+uvicorn[standard]>=0.21.1 # standard 포함하여 개발 시 reload 지원
+httpx>=0.23.3
+pydantic>=1.10.7
+python-dotenv>=1.0.0
+tenacity>=8.2.3 # BaseAgent에서 사용
+psutil>=5.8.0 # 시스템 정보 수집용
+# 필요한 다른 라이브러리 추가 

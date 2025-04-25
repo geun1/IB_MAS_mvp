@@ -97,6 +97,38 @@ services:
             - agent-network
             - multiagent-network
 
+    example_agent:
+        build:
+            context: ../
+            dockerfile: ./agents/example_agent/Dockerfile
+        container_name: example_agent
+        ports:
+            - "8013:8000"
+        environment:
+            - REGISTRY_URL=http://registry:8000
+            - RABBITMQ_HOST=rabbitmq
+            - RABBITMQ_PORT=5672
+            - CONTAINER_NAME=example_agent
+            - PORT=8000
+            - OPENAI_API_KEY=${OPENAI_API_KEY}
+            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+            - LOG_LEVEL=${LOG_LEVEL:-INFO}
+            - PYTHONPATH=/app
+        volumes:
+            - ../common:/app/common
+            - ./example_agent:/app/agent
+            - ./start_agents.sh:/app/agent/start.sh
+        command:
+            [
+                "bash",
+                "-c",
+                "chmod +x /app/agent/start.sh && /app/agent/start.sh",
+            ]
+        restart: always
+        networks:
+            - agent-network
+            - multiagent-network
+
 networks:
     agent-network:
     multiagent-network:
