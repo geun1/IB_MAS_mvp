@@ -200,16 +200,22 @@ async def process_query(request: QueryRequest):
                 "start_time": conversation.start_time,
                 "end_time": time.time(),
                 "result": final_response, # 최종 통합 결과
-                "tasks": [
-                    {
-                        "id": task_id,
-                        "status": "completed", 
-                        "description": task.get("description", "")
-                    } 
-                    for task_id, task in zip(conversation.completed_tasks, tasks) 
-                    if task_id is not None
-                ]
+                "tasks": []  # 태스크 ID 배열 초기화
             }
+
+            # 태스크 ID만 추출하여 저장
+            for task_id in conversation.completed_tasks:
+                if task_id is None:
+                    continue
+                
+                # task_id가 문자열이 아닌 경우 적절히 처리
+                if isinstance(task_id, dict) and 'task_id' in task_id:
+                    final_conversation_data["tasks"].append(task_id['task_id'])
+                elif isinstance(task_id, dict) and 'id' in task_id and isinstance(task_id['id'], dict) and 'task_id' in task_id['id']:
+                    final_conversation_data["tasks"].append(task_id['id']['task_id'])
+                else:
+                    final_conversation_data["tasks"].append(str(task_id))
+
             await app.state.context_manager.save_response(conversation_id, final_conversation_data)
             logger.info(f"대화 ID {conversation_id}의 최종 상태를 Redis에 저장했습니다.")
         except Exception as e:
@@ -255,13 +261,35 @@ async def get_conversation(conversation_id: str):
                 
             # 태스크 상태 포함
             tasks = []
-            for task_id in conversation_data.get("tasks", []):
-                task_info = await app.state.broker_client.get_task(task_id)
-                if task_info:
+            task_list = conversation_data.get("tasks", [])
+
+            # task_list가 리스트가 아닌 경우 빈 리스트로 처리
+            if not isinstance(task_list, list):
+                logger.warning(f"tasks가 리스트 형식이 아님: {type(task_list)}")
+                task_list = []
+
+            for task_item in task_list:
+                try:
+                    # task_item이 문자열이면 그대로 사용, 객체면 ID 추출
+                    task_id = task_item
+                    if isinstance(task_item, dict) and 'id' in task_item:
+                        task_id = task_item['id']
+                    
+                    # 태스크 상태 조회
+                    task_info = await app.state.broker_client.get_task_status(task_id)
+                    if task_info:
+                        tasks.append({
+                            "id": task_id,
+                            "status": task_info.get("status", "unknown"),
+                            "description": task_info.get("description", "")
+                        })
+                except Exception as task_err:
+                    logger.error(f"태스크 정보 조회 중 오류: {str(task_err)}")
+                    # 태스크 정보를 가져오지 못하더라도 기본 정보 추가
                     tasks.append({
-                        "id": task_id,
-                        "status": task_info.get("status", "unknown"),
-                        "description": task_info.get("description", "")
+                        "id": str(task_item),
+                        "status": "unknown",
+                        "description": "태스크 정보를 가져올 수 없습니다."
                     })
             
             # 응답 구성
@@ -316,30 +344,58 @@ async def get_conversation_detail(conversation_id: str):
     """
     try:
         # 컨텍스트 매니저가 초기화되어 있는지 확인
-        if hasattr(app.state, "context_manager"):
+        if hasattr(app.state, "context_manager") and app.state.context_manager:
             # Redis에서 대화 데이터 가져오기
             conversation_data = await app.state.context_manager.get_conversation(conversation_id)
             
             if not conversation_data:
                 raise HTTPException(status_code=404, detail=f"대화 ID {conversation_id}를 찾을 수 없습니다.")
             
-            # 태스크 상태 포함 - BrokerClient.get_task_status 사용
+            # 태스크 상태 포함
             tasks = []
-            for task_id in conversation_data.get("tasks", []):
+            task_list = conversation_data.get("tasks", [])
+            
+            # task_list가 리스트가 아닌 경우 빈 리스트로 처리
+            if not isinstance(task_list, list):
+                logger.warning(f"tasks가 리스트 형식이 아님: {type(task_list)}")
+                task_list = []
+            
+            for task_item in task_list:
                 try:
-                    # get_task 대신 get_task_status 메서드 사용 (또는 BrokerClient에 존재하는 적절한 메서드)
-                    task_info = await app.state.broker_client.get_task_status(task_id)
+                    # 태스크 ID 추출 로직 개선
+                    extracted_task_id = None
+                    
+                    if isinstance(task_item, str):
+                        extracted_task_id = task_item
+                    elif isinstance(task_item, dict):
+                        if 'task_id' in task_item:
+                            extracted_task_id = task_item['task_id']
+                        elif 'id' in task_item:
+                            if isinstance(task_item['id'], str):
+                                extracted_task_id = task_item['id']
+                            elif isinstance(task_item['id'], dict) and 'task_id' in task_item['id']:
+                                extracted_task_id = task_item['id']['task_id']
+                    
+                    if not extracted_task_id:
+                        logger.warning(f"태스크 ID를 추출할 수 없습니다: {task_item}")
+                        continue
+                    
+                    # 브로커에 태스크 정보 요청
+                    task_info = await app.state.broker_client.get_task_status(extracted_task_id)
+                    
                     if task_info:
                         tasks.append({
-                            "id": task_id,
+                            "id": extracted_task_id,
                             "status": task_info.get("status", "unknown"),
-                            "description": task_info.get("description", "")
+                            "description": task_info.get("description", ""),
+                            "role": task_info.get("role", ""),
+                            "result": task_info.get("result", {})
                         })
                 except Exception as task_err:
-                    logger.error(f"태스크 정보 조회 중 오류 (ID: {task_id}): {str(task_err)}")
+                    logger.error(f"태스크 정보 조회 중 오류: {str(task_err)}")
                     # 태스크 정보를 가져오지 못하더라도 기본 정보 추가
                     tasks.append({
-                        "id": task_id,
+                        "id": str(task_item) if not isinstance(task_item, dict) else "unknown",
                         "status": "unknown",
                         "description": "태스크 정보를 가져올 수 없습니다."
                     })
@@ -349,17 +405,20 @@ async def get_conversation_detail(conversation_id: str):
                 "conversation_id": conversation_id,
                 "status": conversation_data.get("status", "unknown"),
                 "message": conversation_data.get("result", {}).get("message", ""),
+                "query": conversation_data.get("query", ""),
                 "tasks": tasks,
                 "created_at": conversation_data.get("start_time"),
                 "completed_at": conversation_data.get("end_time")
             }
             
-            return JSONResponse(content=response)
+            return response
         else:
             return JSONResponse(
                 status_code=500,
                 content={"status": "error", "message": "컨텍스트 매니저가 초기화되지 않았습니다."}
             )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"대화 상세 조회 중 오류: {str(e)}")
         return JSONResponse(

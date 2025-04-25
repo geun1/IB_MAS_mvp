@@ -22,6 +22,28 @@ const ResultViewer: React.FC<ResultViewerProps> = ({
         }
     );
 
+    // 중첩된 결과 구조에서 메시지 추출
+    const extractMessage = (data: any): string => {
+        if (!data) return "";
+
+        // 결과가 중첩된 구조인 경우 (result.result.message)
+        if (
+            data.result &&
+            typeof data.result === "object" &&
+            data.result.result
+        ) {
+            return data.result.result.message || "";
+        }
+
+        // 단일 수준 구조인 경우 (result.message)
+        if (data.result && typeof data.result === "object") {
+            return data.result.message || "";
+        }
+
+        // 직접 message 필드가 있는 경우
+        return data.message || "";
+    };
+
     // 로딩 중 표시
     if (isLoading) {
         return (
@@ -35,20 +57,23 @@ const ResultViewer: React.FC<ResultViewerProps> = ({
         );
     }
 
-    // 에러 표시
+    // 오류 발생 시
     if (isError) {
         return (
             <div className={`bg-white rounded-lg shadow-md p-6 ${className}`}>
                 <h3 className="text-lg font-semibold mb-4">결과</h3>
-                <div className="bg-red-50 text-red-600 p-4 rounded-md">
-                    결과를 가져오는 중 오류가 발생했습니다.
+                <div className="text-red-500 p-4">
+                    결과를 불러오는 중 오류가 발생했습니다.
                 </div>
             </div>
         );
     }
 
+    // 추출된 메시지
+    const message = extractMessage(data);
+
     // 결과가 없는 경우
-    if (!data || !data.message) {
+    if (!message) {
         return (
             <div className={`bg-white rounded-lg shadow-md p-6 ${className}`}>
                 <h3 className="text-lg font-semibold mb-4">결과</h3>
@@ -66,7 +91,7 @@ const ResultViewer: React.FC<ResultViewerProps> = ({
         <div className={`bg-white rounded-lg shadow-md p-6 ${className}`}>
             <h3 className="text-lg font-semibold mb-4">결과</h3>
             <div className="prose max-w-none">
-                <ReactMarkdown>{data.message}</ReactMarkdown>
+                <ReactMarkdown>{message}</ReactMarkdown>
             </div>
         </div>
     );

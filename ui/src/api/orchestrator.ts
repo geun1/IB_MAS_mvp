@@ -11,19 +11,18 @@ export const orchestratorApi = {
     },
 
     // 대화 상태 조회
-    getConversationStatus: async (
-        conversationId: string
-    ): Promise<QueryResponse> => {
+    getConversationStatus: async (conversationId: string): Promise<any> => {
         try {
             const response = await apiClient.get(
                 `${BASE_URL}/conversations/${conversationId}`
             );
+
+            // 응답 구조 로깅 (디버깅 용도)
+            console.debug("대화 상태 응답:", response.data);
+
             return response.data;
         } catch (error) {
-            console.error(
-                `대화 ID(${conversationId}) 상태 조회 중 오류:`,
-                error
-            );
+            console.error("대화 상태 조회 오류:", error);
             throw error;
         }
     },

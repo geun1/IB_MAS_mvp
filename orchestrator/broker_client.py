@@ -5,7 +5,7 @@ import logging
 import httpx
 import asyncio
 import time
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Union
 from .config import BROKER_URL
 
 # 로깅 설정
@@ -108,25 +108,40 @@ class BrokerClient:
             logger.error(f"태스크 생성 요청 중 오류: {str(e)}")
             raise e
     
-    async def get_task_status(self, task_id: str) -> Dict[str, Any]:
+    async def get_task_status(self, task_id: Union[str, Dict]) -> Dict[str, Any]:
         """
         태스크 상태 조회
         
         Args:
-            task_id: 태스크 ID
+            task_id: 태스크 ID (문자열 또는 객체)
             
         Returns:
             태스크 상태 정보
         """
         try:
+            # task_id가 객체인 경우 처리
+            if isinstance(task_id, dict):
+                if 'task_id' in task_id:
+                    task_id = task_id['task_id']
+                elif 'id' in task_id and isinstance(task_id['id'], dict) and 'task_id' in task_id['id']:
+                    task_id = task_id['id']['task_id']
+                elif 'id' in task_id and isinstance(task_id['id'], str):
+                    task_id = task_id['id']
+            
+            # task_id가 여전히 딕셔너리인 경우 로그 출력 후 기본값 반환
+            if isinstance(task_id, dict):
+                logger.error(f"태스크 ID를 추출할 수 없습니다: {str(task_id)}")
+                return {"status": "unknown", "description": "유효하지 않은 태스크 ID 형식"}
+            
+            # 태스크 ID만 전달하도록 수정
             async with httpx.AsyncClient() as client:
+                logger.debug(f"태스크 상태 조회 요청: {task_id}")
                 response = await client.get(f"{self.broker_url}/tasks/{task_id}")
-                response.raise_for_status()
                 return response.json()
                 
         except Exception as e:
             logger.error(f"태스크 상태 조회 중 오류: {str(e)}")
-            return {"status": "error", "error": str(e)}
+            return {"status": "unknown", "description": "태스크 정보를 가져올 수 없습니다."}
     
     async def wait_for_task_completion(
         self, task_id: str, timeout: int = 60, interval: int = 2
