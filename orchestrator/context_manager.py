@@ -13,16 +13,18 @@ logger = logging.getLogger(__name__)
 class ContextManager:
     """대화 컨텍스트 관리 클래스"""
     
-    def __init__(self, redis_url: str = "redis://redis:6379/0", max_history: int = 10):
+    def __init__(self, redis_url: str = "redis://redis:6379/0", max_history: int = 10, ttl: int = 60*60*24):
         """
         컨텍스트 관리자 초기화
         
         Args:
             redis_url: Redis 서버 URL
             max_history: 최대 대화 기록 저장 개수
+            ttl: 키 만료 시간 (초)
         """
         self.redis = redis.Redis.from_url(redis_url, decode_responses=True)
         self.max_history = max_history
+        self.ttl = ttl
         logger.info("컨텍스트 관리자 초기화 완료")
     
     async def save_query(self, conversation_id: str, query: str, user_id: Optional[str] = None) -> None:
@@ -84,12 +86,8 @@ class ContextManager:
             
             # 저장
             key = f"conversation:{conversation_id}"
-            await self.redis.set(key, json.dumps(conversation))
-            # Redis의 expire는 동기 함수가 아닌 경우가 있으므로 조건부 await 추가
-            if inspect.iscoroutinefunction(self.redis.expire):
-                await self.redis.expire(key, self.ttl)  # TTL 설정
-            else:
-                self.redis.expire(key, self.ttl)  # TTL 설정 (동기 함수인 경우)
+            self.redis.set(key, json.dumps(conversation))
+            self.redis.expire(key, self.ttl)
             
             logger.info(f"대화 ID {conversation_id}의 응답 저장 완료")
         except Exception as e:
