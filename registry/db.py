@@ -36,7 +36,7 @@ class RedisClient:
             
             # Redis가 없으면 메모리 저장
             if self.redis is None:
-                _MEM_AGENTS[agent.id] = agent.dict()
+                _MEM_AGENTS[agent.id] = agent.model_dump()
                 logging.info(f"(메모리) 에이전트 {agent.id} 등록 완료")
                 return True
 
@@ -45,7 +45,7 @@ class RedisClient:
                 pipeline = self.redis.pipeline()
                 
                 # 에이전트 데이터 저장
-                agent_dict = agent.dict()
+                agent_dict = agent.model_dump()
                 agent_json = json.dumps(agent_dict)
                 
                 # 1. 에이전트 기본 정보 저장

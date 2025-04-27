@@ -128,4 +128,27 @@ class RegistryClient:
                 else:
                     return {"status": "unhealthy", "details": f"HTTP {response.status_code}"}
         except Exception as e:
-            return {"status": "unhealthy", "details": str(e)} 
+            return {"status": "unhealthy", "details": str(e)}
+    
+    async def get_agent_configs(self, role: str) -> Optional[Dict[str, Any]]:
+        """
+        특정 역할에 대한 에이전트 설정 조회
+        
+        Args:
+            role: 에이전트 역할
+        
+        Returns:
+            에이전트 설정 딕셔너리 또는 None
+        """
+        try:
+            url = f"{self.registry_url}/agents/configs/{role}"
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                
+                config_data = response.json()
+                logger.info(f"'{role}' 역할에 대한 에이전트 설정을 조회했습니다")
+                return config_data
+        except Exception as e:
+            logger.error(f"에이전트 설정 조회 중 오류: {str(e)}")
+            return None 

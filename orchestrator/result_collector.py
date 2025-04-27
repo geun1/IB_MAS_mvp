@@ -364,149 +364,143 @@ class ResultCollector:
 
     async def process_task(self, task: Dict[str, Any]) -> Dict[str, Any]:
         """
-        태스크 처리 및 결과 반환
+        태스크 처리 및 결과 수집
         
         Args:
-            task: 처리할 태스크 정보
+            task: 태스크 데이터
             
         Returns:
             태스크 처리 결과
         """
-        # 로깅 ID 생성 (디버깅 추적용)
-        log_id = f"TASK_{int(time.time())}_{id(task)}"
+        task_uid = f"TASK_{int(time.time())}_{randint(100000000000000000, 999999999999999999)}"
+        logger.info(f"[{task_uid}] 태스크 처리 시작: 역할={task.get('role')}, 설명={task.get('description')}")
+        logger.info(f"[{task_uid}] 태스크 전체 데이터: {task}")
+        
+        # 브로커 태스크 ID
+        broker_task_id = None
+        
+        # 컨텍스트를 위한 의존성 결과 처리
+        context = {}
+        task_has_context = False
         
         try:
-            # 태스크 메타 정보 로깅
-            task_role = task.get("role", "unknown")
-            task_description = task.get("description", "알 수 없는 태스크")
-            conversation_id = task.get("conversation_id", self.current_conversation_id)
+            # 태스크 정보 로깅
+            logger.info(f"[{task_uid}] 태스크 결과 저장소 초기화")
             
-            logger.info(f"[{log_id}] 태스크 처리 시작: 역할={task_role}, 설명={task_description}")
-            logger.info(f"[{log_id}] 태스크 전체 데이터: {task}")
-            
-            # 대화 ID 설정 (없는 경우)
-            if not hasattr(self, 'current_conversation_id') or not self.current_conversation_id:
-                self.current_conversation_id = conversation_id
-                logger.info(f"[{log_id}] 현재 대화 ID 설정: {conversation_id}")
-            
-            # 결과 저장소 초기화
-            if not hasattr(self, 'task_results'):
-                self.task_results = {}
-                logger.info(f"[{log_id}] 태스크 결과 저장소 초기화")
-
-            # 태스크 ID 초기화 - 태스크에서 가져오거나 생성
-            task_id = task.get("task_id", None)
-            logger.info(f"[{log_id}] 태스크 ID: {task_id}")
-            
-            # 의존성 정보 확인
-            depends_on = task.get("depends_on", [])
-            depends_results = []
-            
-            # 의존 태스크 결과 수집
-            if depends_on:
-                logger.info(f"[{log_id}] 태스크의 의존성 처리 시작: {depends_on}")
-                for dep_task_id in depends_on:
-                    # 의존성이 문자열 태스크 ID인지 확인
-                    if not isinstance(dep_task_id, str) or not dep_task_id.startswith("task_"):
-                        logger.warning(f"[{log_id}] 유효하지 않은 의존성 ID 무시: {dep_task_id} (타입: {type(dep_task_id)})")
-                        continue
-                        
-                    logger.info(f"[{log_id}] 의존성 태스크 결과 조회 중: {dep_task_id}")
-                    try:
-                        dep_result = await self.broker_client.get_task_result(dep_task_id)
-                        
-                        if dep_result:
-                            logger.info(f"[{log_id}] 의존성 결과 추가 성공: {dep_task_id}")
-                            logger.debug(f"[{log_id}] 의존성 결과 데이터: {dep_result}")
-                            depends_results.append(dep_result)
-                        else:
-                            logger.warning(f"[{log_id}] 의존성 태스크 {dep_task_id}의 결과가 없음 (None)")
-                    except Exception as e:
-                        logger.error(f"[{log_id}] 의존성 결과 조회 중 오류: {str(e)}")
-                
-                logger.info(f"[{log_id}] 의존성 처리 완료: {len(depends_results)}개 성공")
-            
-            # 태스크 파라미터 준비
+            role = task.get("role")
+            description = task.get("description", "Unknown task")
             params = task.get("params", {})
-            logger.info(f"[{log_id}] 태스크 파라미터: {params}")
+            conversation_id = task.get("conversation_id")
+            depends_on = task.get("depends_on", [])
             
-            # 컨텍스트 정보 구성
-            context = {"depends_results": depends_results} if depends_results else None
-            logger.info(f"[{log_id}] 컨텍스트 구성 완료: {context is not None}")
+            # 태스크 ID 로깅 - 아직 생성되지 않음
+            logger.info(f"[{task_uid}] 태스크 ID: {broker_task_id}")
             
-            # 브로커에 태스크 생성 요청
-            logger.info(f"[{log_id}] 브로커에 태스크 생성 요청: 역할={task_role}, 대화ID={conversation_id}")
-            try:
-                task_id = await self.broker_client.create_task(
-                    role=task_role,
-                    params=params,
-                    conversation_id=conversation_id,
-                    context=context
-                )
-                logger.info(f"[{log_id}] 브로커 태스크 생성 성공: {task_id}")
-            except Exception as e:
-                logger.error(f"[{log_id}] 브로커 태스크 생성 중 오류: {str(e)}", exc_info=True)
-                raise
+            # 파라미터 로깅
+            logger.info(f"[{task_uid}] 태스크 파라미터: {params}")
             
-            # 태스크 결과 대기 및 조회
-            logger.info(f"[{log_id}] 태스크 {task_id} 완료 대기 중...")
-            try:
-                start_time = time.time()
-                result = await self.broker_client.wait_for_task_completion(task_id)
-                elapsed_time = time.time() - start_time
-                logger.info(f"[{log_id}] 태스크 {task_id} 완료 (소요시간: {elapsed_time:.2f}초)")
-                logger.debug(f"[{log_id}] 태스크 결과 데이터: {result}")
-            except Exception as e:
-                logger.error(f"[{log_id}] 태스크 결과 대기 중 오류: {str(e)}", exc_info=True)
-                raise
+            # 의존성 태스크가 있으면 결과 가져오기
+            if depends_on:
+                logger.info(f"[{task_uid}] 태스크의 의존성 처리 시작: {depends_on}")
+                
+                depends_results = []
+                for dep_task_id in depends_on:
+                    logger.info(f"[{task_uid}] 의존성 태스크 결과 조회 중: {dep_task_id}")
+                    
+                    dep_result = await self.fetch_dependency_result(dep_task_id)
+                    if dep_result:
+                        logger.info(f"[{task_uid}] 의존성 결과 추가 성공: {dep_task_id}")
+                        depends_results.append(dep_result)
+                    else:
+                        logger.warning(f"[{task_uid}] 의존성 결과 조회 실패: {dep_task_id}")
+                
+                # 컨텍스트 생성
+                if depends_results:
+                    context["depends_results"] = depends_results
+                    task_has_context = True
+                    logger.info(f"[{task_uid}] 의존성 처리 완료: {len(depends_results)}개 성공")
             
-            # 결과 검증
-            if not result:
-                logger.warning(f"[{log_id}] 태스크 결과가 없음 (None)")
-                result = {
-                    "status": "failed",
-                    "error": "태스크 결과가 없음"
-                }
+            # 컨텍스트 구성 여부 로깅
+            logger.info(f"[{task_uid}] 컨텍스트 구성 완료: {task_has_context}")
             
-            # 결과 상태 확인
-            status = result.get("status", "unknown")
-            logger.info(f"[{log_id}] 태스크 상태: {status}")
+            # 브로커에 태스크 생성
+            logger.info(f"[{task_uid}] 브로커에 태스크 생성 요청: 역할={role}, 대화ID={conversation_id}")
             
-            # 결과에 메타데이터 추가
-            result["task_id"] = task_id
-            result["role"] = task_role
-            result["description"] = task_description
+            # UI에서 전달된 에이전트 설정이 있는지 확인
+            agent_configs = {}
+            if "agent_configs" in task and task["agent_configs"]:
+                agent_configs = task["agent_configs"]
+                logger.info(f"[{task_uid}] 에이전트 설정 포함: {agent_configs}")
             
-            # level 정보 추가 (의존성 처리를 위해)
-            if "level" not in result:
-                # role이 code_generator면 level 1, 그 외에는 level 2로 설정
-                level = 1 if task_role == "code_generator" else 2
-                result["level"] = level
-                logger.info(f"[{log_id}] 태스크 레벨 설정: {level}")
+            # 태스크 생성
+            create_params = {"conversation_id": conversation_id}
+            if task_has_context:
+                create_params["context"] = context
+            if agent_configs:
+                if asyncio.iscoroutine(agent_configs):
+                    agent_configs = await agent_configs  # 코루틴 객체를 await로 실행
+                create_params["agent_configs"] = agent_configs
             
-            # 결과의 content/output 형식 확인
-            if isinstance(result.get("result"), dict):
-                logger.info(f"[{log_id}] 결과 내부 키: {result['result'].keys()}")
-                if "content" in result["result"]:
-                    logger.info(f"[{log_id}] 결과 content 존재 (길이: {len(str(result['result']['content']))})")
-                if "output" in result["result"]:
-                    logger.info(f"[{log_id}] 결과 output 존재 (길이: {len(str(result['result']['output']))})")
+            create_params_copy = create_params.copy()
+            if 'agent_configs' in create_params_copy:
+                create_params_copy.pop('agent_configs')
+            task_id = await self.broker_client.create_task(role, params, **create_params_copy)
+            broker_task_id = task_id
             
-            # 결과 저장
-            self.task_results[task_id] = result
-            logger.info(f"[{log_id}] 태스크 결과 저장 완료 (task_id: {task_id})")
+            # 태스크 생성 성공
+            logger.info(f"[{task_uid}] 브로커 태스크 생성 성공: {task_id}")
             
-            return result
+            # 태스크 완료 대기
+            logger.info(f"[{task_uid}] 태스크 {task_id} 완료 대기 중...")
+            start_time = time.time()
+            task_result = await self.broker_client.wait_for_task_completion(task_id)
+            end_time = time.time()
+            
+            # 태스크 완료
+            logger.info(f"[{task_uid}] 태스크 {task_id} 완료 (소요시간: {(end_time - start_time):.2f}초)")
+            
+            # 태스크 상태 확인
+            task_status = task_result.get("status", "unknown")
+            logger.info(f"[{task_uid}] 태스크 상태: {task_status}")
+            
+            # 실행 레벨 설정 (기본값: 1)
+            task_level = task.get("level", 1)
+            logger.info(f"[{task_uid}] 태스크 레벨 설정: {task_level}")
+            task_result["level"] = task_level
+            
+            # 태스크 설명 추가
+            task_result["description"] = description
+            
+            # 결과 분석 로깅
+            if "result" in task_result:
+                result_keys = task_result["result"].keys() if isinstance(task_result["result"], dict) else []
+                logger.info(f"[{task_uid}] 결과 내부 키: {result_keys}")
+            
+            # 태스크 결과 저장
+            self.results[task_id] = task_result
+            logger.info(f"[{task_uid}] 태스크 결과 저장 완료 (task_id: {task_id})")
+            
+            return task_result
+            
         except Exception as e:
-            logger.error(f"[{log_id}] 태스크 처리 중 예외 발생: {str(e)}", exc_info=True)
-            # 오류가 발생해도 최소한의 결과 반환
+            logger.error(f"[{task_uid}] 태스크 처리 중 오류 발생: {str(e)}", exc_info=True)
+            
+            # 에러 결과 반환
             error_result = {
                 "status": "failed",
                 "error": str(e),
-                "task_id": task.get("task_id", None) or f"error_{int(time.time())}",
+                "task_id": broker_task_id,
                 "role": task.get("role", "unknown"),
-                "description": task.get("description", "알 수 없는 태스크")
+                "description": task.get("description", "Unknown task"),
+                "result": {
+                    "content": f"태스크 처리 중 오류가 발생했습니다: {str(e)}"
+                }
             }
+            
+            # 태스크 ID가 있으면 결과 저장
+            if broker_task_id:
+                self.results[broker_task_id] = error_result
+            
             return error_result
 
     async def process_tasks(self, tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -651,4 +645,27 @@ class ResultCollector:
             return all_results
         except Exception as e:
             logger.error(f"태스크 결과 수집 중 오류: {str(e)}")
-            return [] 
+            return []
+
+    async def fetch_dependency_result(self, dep_task_id: str) -> Optional[Dict[str, Any]]:
+        """
+        의존성 태스크 결과를 가져오는 메서드
+        
+        Args:
+            dep_task_id: 의존성 태스크 ID
+        
+        Returns:
+            의존성 태스크 결과 또는 None
+        """
+        try:
+            # 브로커 클라이언트를 통해 태스크 결과 조회
+            dep_result = await self.broker_client.get_task_result(dep_task_id)
+            if dep_result:
+                logger.info(f"의존성 태스크 {dep_task_id} 결과 수집 성공")
+                return dep_result
+            else:
+                logger.warning(f"의존성 태스크 {dep_task_id} 결과를 찾을 수 없음")
+                return None
+        except Exception as e:
+            logger.error(f"의존성 태스크 결과 조회 중 오류: {str(e)}")
+            return None 

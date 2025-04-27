@@ -20,17 +20,18 @@ class AgentParamType(str, Enum):
 class AgentParam(BaseModel):
     name: str
     description: str
-    type: AgentParamType = AgentParamType.STRING
-    required: bool = False
+    type: str
+    required: bool
     default: Optional[Any] = None
     enum: Optional[List[Any]] = None
 
 class Agent(BaseModel):
-    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    id: str
     role: str
     description: str
     params: List[AgentParam] = []
-    type: str = "function"  # function, tool, react 등
+    config_params: List[AgentParam] = []
+    type: str = "function"
     endpoint: str
     status: AgentStatus = AgentStatus.AVAILABLE
     load: float = 0.0  # 0.0~1.0 사이의 부하 지표

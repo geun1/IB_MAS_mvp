@@ -3,6 +3,7 @@ import json
 import time
 import hashlib
 import logging
+import uuid
 from typing import Dict, Any, List, Optional, Tuple
 from .models import TaskStatus, TaskResult
 
@@ -26,42 +27,75 @@ class TaskStore:
         key = f"{role}:{hashlib.md5(param_str.encode()).hexdigest()}"
         return key
         
-    async def create_task(self, task_id: str, role: str, params: Dict[str, Any]) -> TaskResult:
-        """새 태스크 생성"""
-        # 캐시 확인
-        cache_key = self._generate_cache_key(role, params)
-        cached_result = self.redis.get(f"cache:{cache_key}")
+    async def create_task(
+        self, 
+        task_id: str, 
+        role: str, 
+        params: Dict[str, Any],
+        conversation_id: Optional[str] = None,
+        agent_configs: Optional[Dict[str, Dict[str, str]]] = None
+    ) -> TaskResult:
+        """
+        새 태스크 생성
         
-        if cached_result:
-            # 캐시 히트
-            self.logger.info(f"Cache hit for task: {task_id}")
-            task_data = json.loads(cached_result)
-            task_result = TaskResult(**task_data)
-            task_result.task_id = task_id  # 새 태스크 ID로 업데이트
-            task_result.cache_hit = True
-            task_result.status = TaskStatus.COMPLETED
+        Args:
+            task_id: 태스크 ID
+            role: 에이전트 역할
+            params: 태스크 파라미터
+            conversation_id: 대화 ID
+            agent_configs: 에이전트 설정
+
+        Returns:
+            생성된 태스크
+        """
+        try:
+            # 대화 ID가 없으면 새로 생성
+            if not conversation_id:
+                conversation_id = str(uuid.uuid4())
             
-            # 새 태스크 ID로 저장
-            self.redis.set(f"task:{task_id}", json.dumps(task_result.dict()))
-            return task_result
+            # 현재 시간
+            now = time.time()
             
-        # 새 태스크 생성
-        now = time.time()
-        task_result = TaskResult(
-            task_id=task_id,
-            status=TaskStatus.PENDING,
-            role=role,
-            params=params,
-            created_at=now,
-            updated_at=now
-        )
-        
-        # Redis에 저장
-        self.redis.set(f"task:{task_id}", json.dumps(task_result.dict()))
-        self.redis.zadd("tasks:pending", {task_id: now})
-        self.redis.sadd(f"tasks:role:{role}", task_id)
-        
-        return task_result
+            # 태스크 데이터 생성
+            task_data = {
+                "task_id": task_id,
+                "role": role,
+                "params": params,
+                "conversation_id": conversation_id,
+                "status": TaskStatus.PENDING,
+                "created_at": now,
+                "updated_at": now
+            }
+            
+            # 에이전트 설정이 있으면 추가
+            if agent_configs:
+                task_data["agent_configs"] = agent_configs
+            
+            # Redis에 태스크 저장
+            self.redis.set(
+                f"task:{task_id}", 
+                json.dumps(task_data),
+                ex=self.cache_ttl
+            )
+            
+            # 대화 ID에 대한 태스크 인덱스 추가
+            self.redis.sadd(f"conversation:{conversation_id}:tasks", task_id)
+            self.redis.expire(f"conversation:{conversation_id}:tasks", self.cache_ttl)
+            
+            # 태스크 결과 변환하여 반환
+            return TaskResult(
+                task_id=task_id,
+                status=TaskStatus.PENDING,
+                role=role,
+                params=params,
+                created_at=now,
+                updated_at=now,
+                agent_configs=agent_configs
+            )
+            
+        except Exception as e:
+            self.logger.error(f"태스크 생성 중 오류: {str(e)}")
+            raise ValueError(f"태스크 생성 실패: {str(e)}")
         
     async def update_task_status(self, task_id: str, status: TaskStatus, 
                                agent_id: Optional[str] = None, 

@@ -47,6 +47,10 @@ class AgentClient:
                         # 기본 요구사항 설정
                         transformed_data["requirements"] = ["덧셈, 뺄셈, 곱셈, 나눗셈 기능 구현", "사용자 입력 처리", "결과 출력"]
                 
+                # 설정 정보가 있으면 그대로 전달
+                if "agent_configs" in original_data:
+                    transformed_data["agent_configs"] = original_data["agent_configs"]
+                
                 # 데이터 교체
                 task_data = transformed_data
                 self.logger.info(f"코드 생성기 요청 데이터 변환: {task_data}")
@@ -60,12 +64,22 @@ class AgentClient:
         # 수정된 엔드포인트 로깅
         self.logger.info(f"수정된 엔드포인트: {endpoint}")
         
+        # 에이전트 설정 정보가 있는지 확인 및 로깅
+        if "agent_configs" in task_data:
+            agent_role = task_data.get("role", "unknown")
+            configs = task_data["agent_configs"].get(agent_role, {})
+            if configs:
+                self.logger.info(f"에이전트 설정 정보 포함: {agent_role}에 대한 {len(configs)} 개의 설정")
+            else:
+                self.logger.warning(f"에이전트 {agent_role}에 대한 설정 정보가 없습니다.")
+        
         for attempt in range(self.max_retries + 1):
             try:
                 self.logger.info(f"에이전트 호출 시도 ({attempt+1}/{self.max_retries+1}): {endpoint}")
                 
-                # 요청 데이터 로깅
-                self.logger.info(f"요청 데이터: {json.dumps(task_data, ensure_ascii=False)}")
+                # 요청 데이터 로깅 (보안 정보는 마스킹)
+                safe_log_data = self.mask_sensitive_data(task_data)
+                self.logger.info(f"요청 데이터: {json.dumps(safe_log_data, ensure_ascii=False)}")
                 
                 async with httpx.AsyncClient() as client:
                     response = await client.post(
@@ -90,6 +104,22 @@ class AgentClient:
                 await asyncio.sleep(0.5 * (attempt + 1))  # 지수 백오프
         
         return None 
+    
+    def mask_sensitive_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """민감한 정보(API 키 등)를 마스킹하여 안전하게 로깅할 수 있는 데이터 반환"""
+        if not isinstance(data, dict):
+            return data
+            
+        result = data.copy()
+        
+        # agent_configs에서 민감 정보 마스킹
+        if "agent_configs" in result:
+            for agent_role, configs in result["agent_configs"].items():
+                for key, value in configs.items():
+                    if any(sensitive in key.lower() for sensitive in ["key", "secret", "password", "token", "api"]):
+                        result["agent_configs"][agent_role][key] = "********"
+        
+        return result
 
     async def invoke_agent(self, agent_url: str, task_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -109,7 +139,7 @@ class AgentClient:
         # 에이전트 호출
         for attempt in range(1, self.max_retries + 1):
             try:
-                logger.info(f"에이전트 호출 시도 ({attempt}/{self.max_retries}): {agent_url}")
+                self.logger.info(f"에이전트 호출 시도 ({attempt}/{self.max_retries}): {agent_url}")
                 
                 async with httpx.AsyncClient(timeout=30.0) as client:
                     response = await client.post(
@@ -120,10 +150,10 @@ class AgentClient:
                     response.raise_for_status()
                     return response.json()
             except httpx.TimeoutException:
-                logger.warning(f"에이전트 호출 타임아웃: {agent_url}")
+                self.logger.warning(f"에이전트 호출 타임아웃: {agent_url}")
                 await asyncio.sleep(0.5 * attempt)  # 지수 백오프
             except Exception as e:
-                logger.error(f"에이전트 호출 실패: {str(e)}")
+                self.logger.error(f"에이전트 호출 실패: {str(e)}")
                 if attempt == self.max_retries:
                     break
                 await asyncio.sleep(0.5 * attempt)

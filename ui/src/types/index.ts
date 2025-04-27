@@ -83,6 +83,7 @@ export interface QueryRequest {
     conversation_id?: string;
     user_id?: string;
     context?: Record<string, any>;
+    agent_configs?: Record<string, Record<string, string>>; // 에이전트별 설정 정보
 }
 
 export interface QueryResponse {

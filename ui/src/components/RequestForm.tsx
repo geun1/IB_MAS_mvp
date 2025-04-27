@@ -1,8 +1,9 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useMutation } from "react-query";
 import { orchestratorApi } from "../api/orchestrator";
 import { brokerApi } from "../api/broker";
 import { QueryRequest } from "../types";
+import { agentConfigService } from "../services/AgentConfigService";
 
 // 샘플 시나리오 목록
 const SAMPLE_SCENARIOS = [
@@ -52,14 +53,25 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
 
+        const userQuery = selectedScenario
+            ? SAMPLE_SCENARIOS.find((s) => s.id === selectedScenario)?.prompt ||
+              query
+            : query;
+
+        // 기본 요청 객체
         const request: QueryRequest = {
-            query: selectedScenario
-                ? SAMPLE_SCENARIOS.find((s) => s.id === selectedScenario)
-                      ?.prompt || query
-                : query,
+            query: userQuery,
             conversation_id: Date.now().toString(), // 임시 대화 ID
         };
 
+        // 에이전트 설정 추가 - 서비스에서 모든 설정 가져오기
+        const allConfigs = agentConfigService.getAllConfigs();
+        if (Object.keys(allConfigs).length > 0) {
+            request.agent_configs = allConfigs;
+            console.log("요청에 에이전트 설정 포함:", allConfigs);
+        }
+
+        console.log("요청 전송:", request);
         queryMutation.mutate(request);
     };
 

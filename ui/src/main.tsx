@@ -3,13 +3,18 @@ import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "react-query";
 import App from "./App";
 import "./index.css";
+import { agentConfigService } from "./services/AgentConfigService";
 
-// React Query 설정
+// 에이전트 설정 서비스 초기화 (앱 시작 시 로컬 스토리지에서 데이터 로드)
+agentConfigService;
+
+// 쿼리 클라이언트 설정
 const queryClient = new QueryClient({
     defaultOptions: {
         queries: {
             refetchOnWindowFocus: false,
             retry: 1,
+            staleTime: 60000, // 1분
         },
     },
 });

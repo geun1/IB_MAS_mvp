@@ -147,6 +147,12 @@ async def process_query(request: QueryRequest):
                                 logger.info(f"의존성 추가: {task_id} ({prev_result.get('role', 'unknown')})")
                                 task["depends_on"].append(task_id)
                 
+                # UI에서 전달된 에이전트 설정이 있는지 확인
+                agent_configs = app.state.registry_client.get_agent_configs(role)
+                if agent_configs:
+                    task["agent_configs"] = agent_configs
+                    logger.info(f"에이전트 설정 포함: {agent_configs}")
+                
                 # 태스크 실행 및 결과 수집
                 result = await result_collector.process_task(task)
                 level_results.append(result)

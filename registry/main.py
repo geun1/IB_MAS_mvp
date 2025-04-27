@@ -186,6 +186,11 @@ async def list_agents(
     """에이전트 목록 조회"""
     try:
         agents = await redis_client.list_agents(role, status)
+        # 모든 에이전트 필드가 제대로 포함되었는지 확인
+        for agent in agents:
+            if not hasattr(agent, 'config_params'):
+                logging.warning(f"에이전트 {agent.id}에 config_params 필드가 없습니다")
+                
         return {
             "agents": agents,
             "total": len(agents),

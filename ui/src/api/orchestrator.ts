@@ -1,12 +1,22 @@
 import apiClient from "./api-client";
 import { QueryRequest, QueryResponse } from "../types";
+import { agentConfigService } from "../services/AgentConfigService";
 
 const BASE_URL = "/api/orchestrator";
 
 export const orchestratorApi = {
     // 쿼리 처리 요청
     processQuery: async (request: QueryRequest): Promise<QueryResponse> => {
-        const response = await apiClient.post(`${BASE_URL}/query`, request);
+        // 에이전트 설정 정보 가져오기
+        const agentConfigs = agentConfigService.getRequestConfigs();
+
+        // 요청에 설정 정보 추가
+        const requestData = {
+            ...request,
+            agent_configs: agentConfigs,
+        };
+
+        const response = await apiClient.post(`${BASE_URL}/query`, requestData);
         return response.data;
     },
 

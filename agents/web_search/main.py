@@ -8,6 +8,16 @@ import time
 import psutil
 from datetime import datetime
 import logging
+import asyncio
+
+# 로깅 설정
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
 
 # FastAPI 앱 인스턴스 생성
 app = FastAPI(
@@ -27,9 +37,17 @@ app = FastAPI(
 REGISTRY_URL = os.getenv("REGISTRY_URL", "http://registry:8000")
 HEARTBEAT_INTERVAL = int(os.getenv("HEARTBEAT_INTERVAL", "20"))  # 기본값 20초
 
+# 설정 저장소 (설정이 제공되지 않았을 때를 대비한 기본값)
+DEFAULT_CONFIG = {
+    "api_key": os.getenv("GOOGLE_SEARCH_API_KEY", ""),
+    "cx": os.getenv("GOOGLE_SEARCH_CX", "")
+}
+
 # 모델 정의
 class SearchRequest(BaseModel):
     query: str
+    api_key: Optional[str] = None  # 선택적 API 키 매개변수
+    cx: Optional[str] = None  # 선택적 Custom Search Engine ID 매개변수
 
 class SearchResponse(BaseModel):
     results: List[Dict[str, str]]
@@ -67,6 +85,21 @@ async def register_agent():
                 {
                     "name": "query",
                     "description": "검색할 쿼리 또는 키워드",
+                    "required": True,
+                    "type": "string"
+                }
+            ],
+            "config_params": [  # 설정 파라미터 정의
+                {
+                    "name": "api_key",
+                    "description": "Google Custom Search API Key",
+                    "required": True,
+                    "type": "string",
+                    "is_secret": True  # 보안 민감 정보
+                },
+                {
+                    "name": "cx",
+                    "description": "Google Custom Search Engine ID",
                     "required": True,
                     "type": "string"
                 }
@@ -121,29 +154,122 @@ async def startup_event():
     # 하트비트 태스크 시작
     asyncio.create_task(send_heartbeat())
 
+# 공통 검색 함수
+async def perform_google_search(query: str, api_key: str, cx: str, num_results: int = 5):
+    """
+    Google Custom Search API를 사용하여 웹 검색을 수행합니다.
+    
+    Args:
+        query: 검색어
+        api_key: Google API 키
+        cx: Custom Search Engine ID
+        num_results: 반환할 결과 개수 (기본값: 5)
+        
+    Returns:
+        검색 결과 딕셔너리 (raw_data, formatted_result, search_results 포함)
+    """
+    if not query:
+        return {
+            "status": "error",
+            "error": "검색어가 제공되지 않았습니다"
+        }
+    
+    if not api_key or not cx:
+        return {
+            "status": "error",
+            "error": "Google Custom Search API 설정이 없습니다"
+        }
+    
+    # Google Custom Search API 호출
+    GOOGLE_SEARCH_URL = "https://www.googleapis.com/customsearch/v1"
+    search_params = {
+        "key": api_key,
+        "cx": cx,
+        "q": query,
+        "num": num_results,
+    }
+    
+    logging.info(f"Google Search API 호출: {query}")
+    async with httpx.AsyncClient() as client:
+        response = await client.get(GOOGLE_SEARCH_URL, params=search_params)
+        
+        if response.status_code != 200:
+            error_msg = f"Google Search API 호출 실패: {response.status_code}, {response.text}"
+            logging.error(error_msg)
+            return {
+                "status": "error",
+                "error": "Google Search API 호출 실패",
+                "details": error_msg
+            }
+        
+        data = response.json()
+        
+        # 검색 결과가 없는 경우
+        if "items" not in data or not data["items"]:
+            return {
+                "status": "success",
+                "message": f"'{query}'에 대한 검색 결과가 없습니다.",
+                "search_results": []
+            }
+        
+        # 검색 결과 처리
+        search_results = []
+        for item in data.get("items", []):
+            search_results.append({
+                "title": item.get("title", ""),
+                "snippet": item.get("snippet", ""),
+                "url": item.get("link", "")
+            })
+        
+        # 마크다운 형식으로 결과 포맷팅
+        formatted_result = f"## '{query}'에 대한 검색 결과\n\n"
+        
+        for idx, result in enumerate(search_results, 1):
+            formatted_result += f"### {idx}. {result['title']}\n"
+            formatted_result += f"{result['snippet']}\n"
+            formatted_result += f"[링크]({result['url']})\n\n"
+        
+        return {
+            "status": "success",
+            "raw_data": data,
+            "formatted_result": formatted_result,
+            "search_results": search_results
+        }
+
 # 검색 API
 @app.post("/search")
 async def search(request: SearchRequest):
     try:
-        # 실제로는 검색 API를 호출해야 함
-        # 여기서는 간단한 응답 반환
-        mock_results = [
-            {
-                "title": f"검색 결과 1: {request.query}",
-                "snippet": f"{request.query}에 관한 첫 번째 검색 결과입니다.",
-                "url": f"https://example.com/result1?q={request.query}"
-            },
-            {
-                "title": f"검색 결과 2: {request.query}",
-                "snippet": f"{request.query}에 관한 두 번째 검색 결과입니다.",
-                "url": f"https://example.com/result2?q={request.query}"
-            }
-        ]
+        # 요청에서 API 키와 CX를 가져오거나 기본 설정 사용
+        api_key = request.api_key or DEFAULT_CONFIG["api_key"]
+        cx = request.cx or DEFAULT_CONFIG["cx"]
         
-        return {"results": mock_results}
+        if not api_key or not cx:
+            raise HTTPException(
+                status_code=400, 
+                detail="Google Custom Search API 설정이 없습니다. API 키와 CX를 설정해주세요."
+            )
+            
+        if not request.query:
+            raise HTTPException(
+                status_code=400,
+                detail="검색어가 제공되지 않았습니다."
+            )
+        
+        # 공통 검색 함수 사용
+        result = await perform_google_search(request.query, api_key, cx)
+        
+        if result["status"] == "error":
+            raise HTTPException(status_code=500, detail=result["error"])
+        
+        # API 응답 형식에 맞게 반환
+        return {"results": result["search_results"]}
     
+    except HTTPException:
+        raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+        logging.exception(f"검색 중 오류 발생: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"검색 실패: {str(e)}")
 
 # 루트 경로에도 동일한 핸들러 등록 (호환성 유지)
 @app.post("/")
@@ -163,6 +289,43 @@ async def run_task(task: dict):
         params = task.get("params", {})
         query = params.get("query", "")
         
+        # 설정 파라미터 추출 (우선순위: task params > agent_configs > 환경변수 기본값)
+        api_key = params.get("api_key", "")
+        cx = params.get("cx", "")
+        
+        # agent_configs에서 설정 가져오기 (UI에서 전송된 경우)
+        agent_configs = task.get("agent_configs", {})
+        web_search_config = agent_configs.get("web_search", {})
+        
+        if not api_key and web_search_config:
+            api_key = web_search_config.get("api_key", DEFAULT_CONFIG["api_key"])
+            logging.info(f"태스크 {task_id}: agent_configs에서 API 키 설정 사용")
+            
+        if not cx and web_search_config:
+            cx = web_search_config.get("cx", DEFAULT_CONFIG["cx"])
+            logging.info(f"태스크 {task_id}: agent_configs에서 CX 설정 사용")
+
+        # 설정 유효성 검사
+        if not api_key or api_key.strip() == "":
+            logging.warning(f"태스크 {task_id}: API Key가 설정되지 않았습니다")
+            return {
+                "status": "error",
+                "error": "Google Custom Search API Key가 설정되지 않았습니다",
+                "result": {
+                    "content": "API Key를 설정 페이지에서 먼저 설정해주세요. 설정 > 에이전트 설정 메뉴에서 web_search 에이전트의 api_key를 입력해주세요."
+                }
+            }
+        
+        if not cx or cx.strip() == "":
+            logging.warning(f"태스크 {task_id}: Custom Search Engine ID가 설정되지 않았습니다")
+            return {
+                "status": "error",
+                "error": "Google Custom Search Engine ID가 설정되지 않았습니다",
+                "result": {
+                    "content": "Custom Search Engine ID(cx)를 설정 페이지에서 먼저 설정해주세요. 설정 > 에이전트 설정 메뉴에서 web_search 에이전트의 cx를 입력해주세요."
+                }
+            }
+        
         if not query:
             logging.warning(f"태스크 {task_id}: 검색어가 비어 있습니다")
             return {
@@ -173,16 +336,50 @@ async def run_task(task: dict):
                 }
             }
         
-        # 검색 기능 구현 (예시)
-        search_results = f"'{query}'에 대한 검색 결과입니다. 이것은 모의 데이터입니다."
-        
-        # 결과 반환
-        return {
-            "status": "success",
-            "result": {
-                "content": search_results
+        # 공통 검색 함수 사용
+        try:
+            logging.info(f"태스크 {task_id}: '{query}' 검색 시작")
+            search_result = await perform_google_search(query, api_key, cx)
+            
+            if search_result["status"] == "error":
+                logging.error(f"태스크 {task_id}: 검색 오류 - {search_result['error']}")
+                return {
+                    "status": "error",
+                    "error": search_result["error"],
+                    "result": {
+                        "content": search_result.get("details", search_result["error"])
+                    }
+                }
+            
+            if not search_result["search_results"]:
+                logging.info(f"태스크 {task_id}: '{query}'에 대한 검색 결과 없음")
+                return {
+                    "status": "success",
+                    "result": {
+                        "content": f"'{query}'에 대한 검색 결과가 없습니다."
+                    }
+                }
+            
+            # 성공 응답 반환
+            logging.info(f"태스크 {task_id}: 검색 성공 - {len(search_result['search_results'])}개의 결과")
+            return {
+                "status": "success",
+                "result": {
+                    "content": search_result["formatted_result"],
+                    "raw_results": search_result["search_results"]
+                }
             }
-        }
+        except Exception as e:
+            error_msg = f"검색 중 오류 발생: {str(e)}"
+            logging.exception(f"태스크 {task_id}: {error_msg}")
+            return {
+                "status": "error",
+                "error": error_msg,
+                "result": {
+                    "content": f"검색 중 오류가 발생했습니다: {str(e)}"
+                }
+            }
+            
     except Exception as e:
         logging.exception(f"태스크 실행 중 오류 발생: {str(e)}")
         return {
@@ -202,9 +399,6 @@ async def root():
 @app.get("/health")
 async def health():
     return {"status": "healthy"}
-
-# asyncio 임포트
-import asyncio
 
 # 종료 이벤트 핸들러 추가
 @app.on_event("shutdown")

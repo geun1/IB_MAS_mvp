@@ -1,12 +1,22 @@
 import apiClient from "./api-client";
 import { TaskRequest, TaskResponse, TaskResult, TaskList } from "../types";
+import { agentConfigService } from "../services/AgentConfigService";
 
 const BASE_URL = "/api/broker";
 
 export const brokerApi = {
     // 태스크 직접 제출
     submitTask: async (task: TaskRequest): Promise<TaskResponse> => {
-        const response = await apiClient.post(`${BASE_URL}/tasks`, task);
+        // 에이전트 설정 정보 가져오기
+        const agentConfigs = agentConfigService.getRequestConfigs();
+
+        // 요청에 설정 정보 추가
+        const requestData = {
+            ...task,
+            agent_configs: agentConfigs,
+        };
+
+        const response = await apiClient.post(`${BASE_URL}/tasks`, requestData);
         return response.data;
     },
 

@@ -29,6 +29,7 @@ class TaskRequest(BaseModel):
     role: str
     params: Dict[str, Any]
     conversation_id: str
+    agent_configs: Optional[Dict[str, Any]] = None
 
 class TaskResponse(BaseModel):
     task_id: str
@@ -93,7 +94,7 @@ async def process_task(task: TaskRequest, background_tasks: BackgroundTasks):
         task_id = f"task_{task.role}_{task.conversation_id}_{hash(str(task.params))}"
         
         # 태스크 생성 및 저장
-        await app.state.task_store.create_task(task_id, task.role, task.params)
+        await app.state.task_store.create_task(task_id, task.role, task.params, agent_configs=task.agent_configs)
         
         # 백그라운드에서 태스크 처리
         background_tasks.add_task(_execute_task, task, task_id)
@@ -147,10 +148,21 @@ async def _execute_task(task: TaskRequest, task_id: str):
         else:
             enhanced_params = validated_params
         
+        # 요청 데이터 구성
+        request_data = {
+            "params": enhanced_params,
+            "task_id": task_id
+        }
+        
+        # agent_configs가 있으면 요청에 추가
+        if hasattr(task, 'agent_configs') and task.agent_configs:
+            request_data["agent_configs"] = task.agent_configs
+            logging.info(f"에이전트 설정 포함: {task.agent_configs}")
+        
         # 3. 에이전트 호출
         result = await app.state.agent_client.execute_task(
             agent.endpoint, 
-            {"params": enhanced_params, "task_id": task_id}
+            request_data
         )
         
         # 4. 결과 처리
