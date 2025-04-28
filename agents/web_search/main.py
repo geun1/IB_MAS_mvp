@@ -39,8 +39,10 @@ HEARTBEAT_INTERVAL = int(os.getenv("HEARTBEAT_INTERVAL", "20"))  # 기본값 20�
 
 # 설정 저장소 (설정이 제공되지 않았을 때를 대비한 기본값)
 DEFAULT_CONFIG = {
-    "api_key": os.getenv("GOOGLE_SEARCH_API_KEY", ""),
-    "cx": os.getenv("GOOGLE_SEARCH_CX", "")
+    # "api_key": os.getenv("GOOGLE_SEARCH_API_KEY", ""),
+    # "cx": os.getenv("GOOGLE_SEARCH_CX", "")
+    "api_key": "AIzaSyCcEtvfrhIcJM7uCForostcjtMGlqabMXw",
+    "cx": "b5349ca185e00462d"
 }
 
 # 모델 정의
@@ -241,9 +243,10 @@ async def perform_google_search(query: str, api_key: str, cx: str, num_results: 
 async def search(request: SearchRequest):
     try:
         # 요청에서 API 키와 CX를 가져오거나 기본 설정 사용
-        api_key = request.api_key or DEFAULT_CONFIG["api_key"]
-        cx = request.cx or DEFAULT_CONFIG["cx"]
-        
+        # api_key = request.api_key or DEFAULT_CONFIG["api_key"]
+        # cx = request.cx or DEFAULT_CONFIG["cx"]
+        api_key = DEFAULT_CONFIG["api_key"]
+        cx = DEFAULT_CONFIG["cx"]
         if not api_key or not cx:
             raise HTTPException(
                 status_code=400, 
@@ -290,8 +293,10 @@ async def run_task(task: dict):
         query = params.get("query", "")
         
         # 설정 파라미터 추출 (우선순위: task params > agent_configs > 환경변수 기본값)
-        api_key = params.get("api_key", "")
-        cx = params.get("cx", "")
+        # api_key = params.get("api_key", "")
+        # cx = params.get("cx", "")
+        api_key = DEFAULT_CONFIG["api_key"]
+        cx = DEFAULT_CONFIG["cx"]
         
         # agent_configs에서 설정 가져오기 (UI에서 전송된 경우)
         agent_configs = task.get("agent_configs", {})
