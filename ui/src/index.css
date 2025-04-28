@@ -22,3 +22,20 @@ body {
         @apply text-lg font-bold my-2;
     }
 }
+
+/* 마크다운 표 스타일 */
+.prose table {
+    @apply w-full text-sm text-left text-gray-800;
+}
+
+.prose table th {
+    @apply px-4 py-2 bg-gray-100 font-medium;
+}
+
+.prose table td {
+    @apply px-4 py-2;
+}
+
+.prose table tr {
+    @apply border-b;
+}

@@ -129,6 +129,54 @@ services:
             - agent-network
             - multiagent-network
 
+    react_agent:
+        build:
+            context: ../
+            dockerfile: ./agents/react_agent/Dockerfile
+        container_name: react_agent
+        ports:
+            - "8030:8030"
+        volumes:
+            - ../common:/app/common:ro
+            - ../agents/react_agent:/app/agent:ro
+        environment:
+            - REGISTRY_URL=http://registry:8000
+            - BROKER_URL=http://broker:8000
+            - CONTAINER_NAME=react_agent
+            - PORT=8030
+            - PYTHONPATH=/app
+            - OPENAI_API_KEY=${OPENAI_API_KEY}
+            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+            - LOG_LEVEL=INFO
+        networks:
+            - agent-network
+            - multiagent-network
+        restart: always
+
+    data_analysis_agent:
+        build:
+            context: ../
+            dockerfile: ./agents/data_analysis_agent/Dockerfile
+        container_name: data_analysis_agent
+        ports:
+            - "8040:8040"
+        volumes:
+            - ../common:/app/common:ro
+            - ../agents/data_analysis_agent:/app/agent:ro
+        environment:
+            - REGISTRY_URL=http://registry:8000
+            - BROKER_URL=http://broker:8000
+            - CONTAINER_NAME=data_analysis_agent
+            - PORT=8040
+            - PYTHONPATH=/app
+            - OPENAI_API_KEY=${OPENAI_API_KEY}
+            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+            - LOG_LEVEL=INFO
+        networks:
+            - agent-network
+            - multiagent-network
+        restart: always
+
 networks:
     agent-network:
     multiagent-network:

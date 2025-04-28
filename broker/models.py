@@ -25,6 +25,7 @@ class TaskResult(BaseModel):
     execution_time: Optional[float] = None
     cache_hit: bool = False
     agent_configs: Optional[Dict[str, Dict[str, str]]] = None
+    exclude_agent: Optional[str] = None
 
 class TaskList(BaseModel):
     tasks: List[TaskResult]
@@ -44,4 +45,5 @@ class Task(BaseModel):
     result: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     agent_id: Optional[str] = None
-    agent_configs: Optional[Dict[str, Dict[str, str]]] = None 
+    agent_configs: Optional[Dict[str, Dict[str, str]]] = None
+    exclude_agent: Optional[str] = None 

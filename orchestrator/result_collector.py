@@ -3,8 +3,9 @@
 """
 import logging
 import asyncio
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 import time
+import json
 from random import randint
 
 from .broker_client import BrokerClient
@@ -247,34 +248,12 @@ class ResultCollector:
                     is_success = True  
                     success_reason = f"내부 result 상태가 '{result['result'].get('status')}'임"
                 
-                # 내용 추출 로직
+                # 내용 추출 로직 (에이전트 타입에 의존하지 않는 일반적인 접근 방식)
                 content = None
                 content_source = "없음"
                 
-                # 직접 content 필드가 있는 경우
-                if "content" in result:
-                    content = result["content"]
-                    content_source = "최상위 content"
-                # result 필드 내에 content가 있는 경우 (writer 에이전트)
-                elif isinstance(result.get("result"), dict) and "content" in result["result"]:
-                    content = result["result"]["content"]
-                    content_source = "result.content"
-                # result.result.content (writer agent의 중첩 구조)
-                elif (
-                    isinstance(result.get("result"), dict)
-                    and isinstance(result["result"].get("result"), dict)
-                    and "content" in result["result"]["result"]
-                ):
-                    content = result["result"]["result"]["content"]
-                    content_source = "result.result.content"
-                # code_generator 결과인 경우
-                elif isinstance(result.get("result"), dict) and "code_files" in result["result"]:
-                    code_files = result["result"]["code_files"]
-                    explanation = result["result"].get("explanation", "")
-                    content = f"## 코드 설명\n{explanation}\n\n## 코드\n"
-                    for filename, code in code_files.items():
-                        content += f"\n### {filename}\n```python\n{code}\n```\n"
-                    content_source = "code_files + explanation"
+                # 재귀적으로 결과 딕셔너리에서 유의미한 내용 추출
+                content, content_source = self._extract_content_from_result(result)
                 
                 # 내용 및 성공 여부 로깅
                 has_content = content is not None and len(str(content).strip()) > 0
@@ -361,6 +340,100 @@ class ResultCollector:
                 "message": f"태스크 결과 통합 중 오류가 발생했습니다: {str(e)}",
                 "tasks": results
             }
+
+    def _extract_content_from_result(self, result: Dict[str, Any]) -> Tuple[Optional[str], str]:
+        """
+        결과 딕셔너리에서 내용을 추출하는 범용 메서드
+        
+        Args:
+            result: 태스크 결과 딕셔너리
+            
+        Returns:
+            추출된 내용과 출처 정보
+        """
+        # 직접 content 필드가 있는 경우
+        if "content" in result and result["content"]:
+            return result["content"], "최상위 content"
+        
+        # result 딕셔너리가 있는 경우 내부 탐색
+        if isinstance(result.get("result"), dict):
+            result_dict = result["result"]
+            
+            # 직접 content 필드가 있는 경우
+            if "content" in result_dict and result_dict["content"]:
+                return result_dict["content"], "result.content"
+            
+            # code_files가 있는 경우 (코드 생성기)
+            if "code_files" in result_dict:
+                code_files = result_dict["code_files"]
+                explanation = result_dict.get("explanation", "")
+                content = f"## 코드 설명\n{explanation}\n\n## 코드\n"
+                for filename, code in code_files.items():
+                    content += f"\n### {filename}\n```python\n{code}\n```\n"
+                return content, "code_files + explanation"
+            
+            # 중첩된 result 구조 확인
+            if isinstance(result_dict.get("result"), dict):
+                nested_result = result_dict["result"]
+                
+                # 중첩된 content 필드 확인
+                if "content" in nested_result and nested_result["content"]:
+                    return nested_result["content"], "result.result.content"
+                
+                # 분석 결과 확인 (데이터 분석 등)
+                if "analysis_results" in nested_result and nested_result["analysis_results"]:
+                    analysis_results = nested_result["analysis_results"]
+                    content = "## 데이터 분석 결과\n\n"
+                    
+                    for analysis in analysis_results:
+                        method = analysis.get("method", "unknown")
+                        result_data = analysis.get("result", {})
+                        content += f"### {method.replace('_', ' ').title()}\n"
+                        content += f"```json\n{json.dumps(result_data, indent=2, ensure_ascii=False)}\n```\n\n"
+                    
+                    # 시각화 결과도 있다면 추가
+                    viz_results = nested_result.get("visualization_results", [])
+                    if viz_results:
+                        content += "### 시각화 결과\n\n"
+                        for viz in viz_results:
+                            plot_type = viz.get("plot_type", "unknown")
+                            content += f"#### {plot_type.replace('_', ' ').title()}\n"
+                            if "image" in viz:
+                                content += f"![{plot_type}](data:image/png;base64,{viz['image']})\n\n"
+                    
+                    return content, "analysis_results + visualization_results"
+                
+                # 다른 유형의 중첩된 결과 구조 확인
+                for key, value in nested_result.items():
+                    if isinstance(value, (str, list, dict)) and value:
+                        # 문자열인 경우 바로 반환
+                        if isinstance(value, str):
+                            return value, f"result.result.{key}"
+                        # 리스트 또는 딕셔너리인 경우 JSON으로 변환
+                        else:
+                            content = f"## {key.replace('_', ' ').title()}\n"
+                            content += f"```json\n{json.dumps(value, indent=2, ensure_ascii=False)}\n```\n"
+                            return content, f"result.result.{key}"
+            
+            # 최상위 result 딕셔너리의 다른 의미있는 필드 확인
+            for key, value in result_dict.items():
+                # content, message, text와 같은 일반적인 내용 필드 확인
+                if key in ["content", "message", "text", "answer", "response"] and isinstance(value, str) and value:
+                    return value, f"result.{key}"
+                
+                # 구조화된 결과 필드 확인 (API 응답 등)
+                if key in ["data", "response_data", "results", "items"] and isinstance(value, (dict, list)) and value:
+                    content = f"## {key.replace('_', ' ').title()}\n"
+                    content += f"```json\n{json.dumps(value, indent=2, ensure_ascii=False)}\n```\n"
+                    return content, f"result.{key}"
+        
+        # 최상위 수준의 다른 의미있는 필드 확인
+        for key, value in result.items():
+            if key in ["message", "text", "answer", "response"] and isinstance(value, str) and value:
+                return value, f"최상위.{key}"
+        
+        # 아무것도 찾지 못한 경우
+        return None, "없음"
 
     async def process_task(self, task: Dict[str, Any]) -> Dict[str, Any]:
         """

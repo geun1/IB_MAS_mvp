@@ -33,7 +33,8 @@ class TaskStore:
         role: str, 
         params: Dict[str, Any],
         conversation_id: Optional[str] = None,
-        agent_configs: Optional[Dict[str, Dict[str, str]]] = None
+        agent_configs: Optional[Dict[str, Dict[str, str]]] = None,
+        exclude_agent: Optional[str] = None
     ) -> TaskResult:
         """
         새 태스크 생성
@@ -44,6 +45,7 @@ class TaskStore:
             params: 태스크 파라미터
             conversation_id: 대화 ID
             agent_configs: 에이전트 설정
+            exclude_agent: 제외할 에이전트 ID (ReACT 에이전트 자신 등)
 
         Returns:
             생성된 태스크
@@ -70,6 +72,10 @@ class TaskStore:
             # 에이전트 설정이 있으면 추가
             if agent_configs:
                 task_data["agent_configs"] = agent_configs
+                
+            # 제외할 에이전트가 있으면 추가
+            if exclude_agent:
+                task_data["exclude_agent"] = exclude_agent
             
             # Redis에 태스크 저장
             self.redis.set(
