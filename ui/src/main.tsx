@@ -14,7 +14,7 @@ const queryClient = new QueryClient({
         queries: {
             refetchOnWindowFocus: false,
             retry: 1,
-            staleTime: 60000, // 1분
+            staleTime: 180000, // 1분
         },
     },
 });

@@ -33,17 +33,17 @@
 
 | 항목                                      | 설명                                          | 체크 |
 | ----------------------------------------- | --------------------------------------------- | ---- |
-| Orchestrator API (/query) 구현            | Client 요청 수신                              | []   |
-| 유저 자연어 → task 분해 LLM 프롬프트 설계 | role list를 context로 제공                    | []   |
-| 각 Task에 role 지정 로직                  | 예: write_report 요청 → web_search, writer 등 | []   |
-| 생성된 task를 broker에 전달               | RabbitMQ or HTTP 방식                         | []   |
-| 작업 완료 응답 취합 → Client 전달         | 병렬 처리 고려                                | []   |
+| Orchestrator API (/query) 구현            | Client 요청 수신                              | [x]  |
+| 유저 자연어 → task 분해 LLM 프롬프트 설계 | role list를 context로 제공                    | [x]  |
+| 각 Task에 role 지정 로직                  | 예: write_report 요청 → web_search, writer 등 | [x]  |
+| 생성된 task를 broker에 전달               | RabbitMQ or HTTP 방식                         | [x]  |
+| 작업 완료 응답 취합 → Client 전달         | 병렬 처리 고려                                | [x]  |
 
 ## 5단계: ReACT Agent 구현
 
 | 항목                                   | 설명                                                | 체크 |
 | -------------------------------------- | --------------------------------------------------- | ---- |
-| ReACT 기본 클래스 설계                 | 추론-행동-관찰-반복 패턴 구현, 상태 관리 인터페이스 | []   |
+| ReACT 기본 클래스 설계                 | 추론-행동-관찰-반복 패턴 구현, 상태 관리 인터페이스 | [x]  |
 | 브로커 태스크 위임 시스템 확장         | ReACT 에이전트 제외 로직, 태스크 위임 API 추가      | []   |
 | Fallback 매니저 구현                   | 실패 감지, 재시도 전략, 대체 계획 수립 기능         | []   |
 | 태스크 상태 관리 매커니즘              | 진행 중/완료/실패 상태 추적, 결과 캐싱              | []   |
