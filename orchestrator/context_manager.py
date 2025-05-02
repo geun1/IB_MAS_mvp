@@ -83,6 +83,22 @@ class ContextManager:
             # 대화 관련 태스크 ID 목록도 저장 (있는 경우)
             if isinstance(response, dict) and "tasks" in response:
                 conversation["tasks"] = response["tasks"]
+                
+            # 자연어 태스크 설명 저장 (있는 경우)
+            if isinstance(response, dict) and "task_descriptions" in response:
+                conversation["task_descriptions"] = response["task_descriptions"]
+                
+            # 태스크 분해 설명 저장 (있는 경우)
+            if isinstance(response, dict) and "taskDecomposition" in response:
+                conversation["taskDecomposition"] = response["taskDecomposition"]
+                
+            # 실행 레벨 정보 저장 (있는 경우)
+            if isinstance(response, dict) and "execution_levels" in response:
+                conversation["execution_levels"] = response["execution_levels"]
+            
+            # 최종 메시지 저장 (있는 경우)
+            if isinstance(response, dict) and "message" in response:
+                conversation["message"] = response["message"]
             
             # 저장
             key = f"conversation:{conversation_id}"
@@ -195,4 +211,53 @@ class ContextManager:
         
         except Exception as e:
             logger.error(f"대화 정보 조회 중 오류: {str(e)}")
-            return None 
+            return None
+    
+    async def get_tasks_by_conversation(self, conversation_id: str) -> List[Dict[str, Any]]:
+        """
+        대화와 연관된 태스크 목록 조회
+        
+        Args:
+            conversation_id: 대화 ID
+            
+        Returns:
+            태스크 목록
+        """
+        try:
+            # 대화 정보 조회
+            conversation = await self.get_conversation(conversation_id)
+            if not conversation:
+                return []
+            
+            # 태스크 ID 목록 추출
+            task_ids = []
+            if "tasks" in conversation and isinstance(conversation["tasks"], list):
+                # 태스크 정보가 배열로 되어 있는 경우
+                for task_info in conversation["tasks"]:
+                    if isinstance(task_info, dict) and "id" in task_info:
+                        task_ids.append(task_info["id"])
+                    elif isinstance(task_info, str):
+                        task_ids.append(task_info)
+            
+            # 각 태스크 상세 정보 조회
+            tasks = []
+            for task_id in task_ids:
+                task_key = f"task:{task_id}"
+                task_data = self.redis.get(task_key)
+                
+                if task_data:
+                    task = json.loads(task_data)
+                    tasks.append(task)
+                else:
+                    # 태스크 정보가 없으면 기본 정보만 추가
+                    tasks.append({
+                        "id": task_id,
+                        "status": "unknown",
+                        "conversation_id": conversation_id
+                    })
+            
+            return tasks
+        
+        except Exception as e:
+            logger.error(f"대화 태스크 조회 중 오류: {str(e)}")
+            return [] 

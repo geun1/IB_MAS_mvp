@@ -35,6 +35,8 @@ class TaskDecomposition(BaseModel):
     """태스크 분해 결과 모델"""
     tasks: List[Task]
     reasoning: str
+    # 자연어로 된 실행 레벨별 태스크 설명
+    natural_language_tasks: Optional[List[List[str]]] = None
 
 class QueryRequest(BaseModel):
     """쿼리 요청 모델"""
@@ -42,10 +44,13 @@ class QueryRequest(BaseModel):
     conversation_id: Optional[str] = None
     user_id: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
+    agent_configs: Optional[Dict[str, Any]] = None
 
 class QueryResponse(BaseModel):
     """쿼리 응답 모델"""
     conversation_id: str
     status: str
     tasks: List[Dict[str, Any]]
-    message: str 
+    message: str
+    # 자연어로 된 실행 레벨별 태스크 설명
+    natural_language_tasks: Optional[List[List[str]]] = None 

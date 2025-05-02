@@ -55,6 +55,7 @@ class ConversationState:
         self.start_time: float
         self.update_time: float
         self.end_time: Optional[float] = None
+        self.task_descriptions: List[str] = []
 
 # 앱 시작 이벤트
 @app.on_event("startup")
@@ -95,7 +96,7 @@ async def process_query(request: QueryRequest):
         
         # 태스크 분해
         task_decomposer = TaskDecomposer(app.state.registry_client, app.state.llm_client)
-        tasks, execution_levels = await task_decomposer.decompose_query(
+        tasks, execution_levels, natural_language_tasks = await task_decomposer.decompose_query(
             query=request.query,
             conversation_id=conversation_id,
             user_id=user_id
@@ -103,6 +104,9 @@ async def process_query(request: QueryRequest):
         
         # 태스크 저장
         conversation.tasks = tasks
+        
+        # 자연어 태스크 설명 저장 (JSON 형태로)
+        conversation.task_descriptions = natural_language_tasks
         
         # 결과 수집
         result_collector = ResultCollector(app.state.broker_client, app.state.llm_client)
@@ -198,36 +202,30 @@ async def process_query(request: QueryRequest):
         # 최종 대화 상태를 Redis에 저장
         try:
             # 저장할 최종 응답 데이터 구성
-            final_conversation_data = {
+            final_data = {
                 "conversation_id": conversation_id,
-                "status": "completed",
                 "query": request.query,
-                "user_id": user_id,
-                "start_time": conversation.start_time,
-                "end_time": time.time(),
-                "result": final_response, # 최종 통합 결과
-                "tasks": []  # 태스크 ID 배열 초기화
+                "status": "completed",
+                "tasks": final_results,
+                "message": final_response.get("message", ""),
+                "created_at": conversation.start_time,
+                "updated_at": time.time(),
+                "task_descriptions": natural_language_tasks,  # 자연어 태스크 설명 추가
+                "execution_levels": execution_levels  # 실행 레벨 정보 추가
             }
-
-            # 태스크 ID만 추출하여 저장
-            for task_id in conversation.completed_tasks:
-                if task_id is None:
-                    continue
-                
-                # task_id가 문자열이 아닌 경우 적절히 처리
-                if isinstance(task_id, dict) and 'task_id' in task_id:
-                    final_conversation_data["tasks"].append(task_id['task_id'])
-                elif isinstance(task_id, dict) and 'id' in task_id and isinstance(task_id['id'], dict) and 'task_id' in task_id['id']:
-                    final_conversation_data["tasks"].append(task_id['id']['task_id'])
-                else:
-                    final_conversation_data["tasks"].append(str(task_id))
-
-            await app.state.context_manager.save_response(conversation_id, final_conversation_data)
+            
+            # Redis에 저장
+            await app.state.context_manager.save_response(conversation_id, final_data)
             logger.info(f"대화 ID {conversation_id}의 최종 상태를 Redis에 저장했습니다.")
         except Exception as e:
-            logger.error(f"Redis에 대화 상태 저장 중 오류 발생: {str(e)}")
-
-        return final_response
+            logger.error(f"대화 상태 저장 중 오류: {str(e)}")
+            
+        # 최종 응답 반환
+        return {
+            "conversation_id": conversation_id,
+            "status": "success",
+            "message": "대화가 성공적으로 처리되었습니다."
+        }
 
     except Exception as e:
         logger.exception(f"쿼리 처리 중 오류: {str(e)}")
@@ -245,26 +243,94 @@ async def process_query(request: QueryRequest):
         )
 
 @app.get("/conversation/{conversation_id}", tags=["conversation"])
-async def get_conversation(conversation_id: str):
+async def get_conversation_status(conversation_id: str):
     """
-    특정 대화 ID에 대한 통합 결과 조회
+    대화 상태 조회 API
     
     Args:
         conversation_id: 대화 ID
         
     Returns:
-        통합된 결과 및 상태 정보
+        대화 상태 및 결과
     """
     try:
-        # 컨텍스트 매니저에서 대화 정보 조회
+        # 대화 상태를 DB에서 조회
+        conversation = await app.state.context_manager.get_conversation(conversation_id)
+        if not conversation:
+            raise HTTPException(status_code=404, detail="대화를 찾을 수 없습니다.")
+        
+        # 태스크 결과 가져오기
+        tasks = await app.state.context_manager.get_tasks_by_conversation(conversation_id)
+        
+        # 태스크 및 상태 가공
+        task_info = []
+        for task in tasks:
+            # task에 'id' 키가 없는 경우 'task_id'를 사용하거나 기본값 사용
+            task_id = task.get("id") or task.get("task_id") or "unknown"
+            
+            task_info.append({
+                "id": task_id,
+                "status": task.get("status", "unknown"),
+                "result": task.get("result", None)
+            })
+        
+        # 태스크 결과에서 통합된 마크다운 응답 생성
+        message = ""
+        if tasks and any(task.get("status") == "completed" for task in tasks):
+            # 완료된 태스크 중 최종 결과를 마크다운으로 포맷팅
+            completed_tasks = [task for task in tasks if task.get("status") == "completed"]
+            
+            # 결과 추출 및 마크다운 포맷팅
+            message = await format_conversation_result(completed_tasks)
+        
+        return {
+            "conversation_id": conversation_id,
+            "status": conversation.get("status", "unknown"),
+            "tasks": task_info,
+            "message": message
+        }
+    except Exception as e:
+        logger.error(f"대화 상태 조회 오류: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"대화 상태 조회 중 오류가 발생했습니다: {str(e)}")
+
+@app.get("/conversations", tags=["conversation"])
+async def list_conversations():
+    """
+    모든 대화 목록 조회
+    
+    Returns:
+        대화 ID 및 기본 정보 목록
+    """
+    try:
         if app.state.context_manager:
+            conversations = await app.state.context_manager.list_conversations()
+            return JSONResponse(content={"conversations": conversations})
+        else:
+            return JSONResponse(
+                status_code=500, 
+                content={"status": "error", "message": "컨텍스트 매니저가 초기화되지 않았습니다."}
+            )
+    except Exception as e:
+        logger.error(f"대화 목록 조회 중 오류: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": f"대화 목록 조회 중 오류: {str(e)}"}
+        )
+
+@app.get("/conversations/{conversation_id}/detail", tags=["conversation"])
+async def get_conversation_detail(conversation_id: str):
+    """
+    대화 상세 정보 조회
+    """
+    try:
+        # 컨텍스트 매니저가 초기화되어 있는지 확인
+        if hasattr(app.state, "context_manager") and app.state.context_manager:
+            # Redis에서 대화 데이터 가져오기
             conversation_data = await app.state.context_manager.get_conversation(conversation_id)
+            
             if not conversation_data:
-                return JSONResponse(
-                    status_code=404,
-                    content={"status": "error", "message": f"대화 ID {conversation_id}를 찾을 수 없습니다."}
-                )
-                
+                raise HTTPException(status_code=404, detail=f"대화 ID {conversation_id}를 찾을 수 없습니다.")
+            
             # 태스크 상태 포함
             tasks = []
             task_list = conversation_data.get("tasks", [])
@@ -319,119 +385,6 @@ async def get_conversation(conversation_id: str):
             content={"status": "error", "message": f"대화 조회 중 오류: {str(e)}"}
         )
 
-@app.get("/conversations", tags=["conversation"])
-async def list_conversations():
-    """
-    모든 대화 목록 조회
-    
-    Returns:
-        대화 ID 및 기본 정보 목록
-    """
-    try:
-        if app.state.context_manager:
-            conversations = await app.state.context_manager.list_conversations()
-            return JSONResponse(content={"conversations": conversations})
-        else:
-            return JSONResponse(
-                status_code=500, 
-                content={"status": "error", "message": "컨텍스트 매니저가 초기화되지 않았습니다."}
-            )
-    except Exception as e:
-        logger.error(f"대화 목록 조회 중 오류: {str(e)}")
-        return JSONResponse(
-            status_code=500,
-            content={"status": "error", "message": f"대화 목록 조회 중 오류: {str(e)}"}
-        )
-
-@app.get("/conversations/{conversation_id}/detail", tags=["conversation"])
-async def get_conversation_detail(conversation_id: str):
-    """
-    대화 상세 정보 조회
-    """
-    try:
-        # 컨텍스트 매니저가 초기화되어 있는지 확인
-        if hasattr(app.state, "context_manager") and app.state.context_manager:
-            # Redis에서 대화 데이터 가져오기
-            conversation_data = await app.state.context_manager.get_conversation(conversation_id)
-            
-            if not conversation_data:
-                raise HTTPException(status_code=404, detail=f"대화 ID {conversation_id}를 찾을 수 없습니다.")
-            
-            # 태스크 상태 포함
-            tasks = []
-            task_list = conversation_data.get("tasks", [])
-            
-            # task_list가 리스트가 아닌 경우 빈 리스트로 처리
-            if not isinstance(task_list, list):
-                logger.warning(f"tasks가 리스트 형식이 아님: {type(task_list)}")
-                task_list = []
-            
-            for task_item in task_list:
-                try:
-                    # 태스크 ID 추출 로직 개선
-                    extracted_task_id = None
-                    
-                    if isinstance(task_item, str):
-                        extracted_task_id = task_item
-                    elif isinstance(task_item, dict):
-                        if 'task_id' in task_item:
-                            extracted_task_id = task_item['task_id']
-                        elif 'id' in task_item:
-                            if isinstance(task_item['id'], str):
-                                extracted_task_id = task_item['id']
-                            elif isinstance(task_item['id'], dict) and 'task_id' in task_item['id']:
-                                extracted_task_id = task_item['id']['task_id']
-                    
-                    if not extracted_task_id:
-                        logger.warning(f"태스크 ID를 추출할 수 없습니다: {task_item}")
-                        continue
-                    
-                    # 브로커에 태스크 정보 요청
-                    task_info = await app.state.broker_client.get_task_status(extracted_task_id)
-                    
-                    if task_info:
-                        tasks.append({
-                            "id": extracted_task_id,
-                            "status": task_info.get("status", "unknown"),
-                            "description": task_info.get("description", ""),
-                            "role": task_info.get("role", ""),
-                            "result": task_info.get("result", {})
-                        })
-                except Exception as task_err:
-                    logger.error(f"태스크 정보 조회 중 오류: {str(task_err)}")
-                    # 태스크 정보를 가져오지 못하더라도 기본 정보 추가
-                    tasks.append({
-                        "id": str(task_item) if not isinstance(task_item, dict) else "unknown",
-                        "status": "unknown",
-                        "description": "태스크 정보를 가져올 수 없습니다."
-                    })
-            
-            # 응답 구성
-            response = {
-                "conversation_id": conversation_id,
-                "status": conversation_data.get("status", "unknown"),
-                "message": conversation_data.get("result", {}).get("message", ""),
-                "query": conversation_data.get("query", ""),
-                "tasks": tasks,
-                "created_at": conversation_data.get("start_time"),
-                "completed_at": conversation_data.get("end_time")
-            }
-            
-            return response
-        else:
-            return JSONResponse(
-                status_code=500,
-                content={"status": "error", "message": "컨텍스트 매니저가 초기화되지 않았습니다."}
-            )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"대화 상세 조회 중 오류: {str(e)}")
-        return JSONResponse(
-            status_code=500,
-            content={"status": "error", "message": f"대화 상세 조회 중 오류: {str(e)}"}
-        )
-
 @app.get("/health")
 async def health():
     """
@@ -470,25 +423,166 @@ async def websocket_endpoint(websocket: WebSocket, conversation_id: str):
     except WebSocketDisconnect:
         app.state.websocket_manager.disconnect(websocket, conversation_id)
 
-@app.get("/conversations/{conversation_id}")
-async def get_conversation(conversation_id: str):
+async def format_conversation_result(completed_tasks):
     """
-    대화 상태 조회
+    완료된 태스크 결과를 마크다운 형식으로 포맷팅
+    
+    Args:
+        completed_tasks: 완료된 태스크 목록
+        
+    Returns:
+        마크다운 형식의 결과 문자열
+    """
+    if not completed_tasks:
+        return ""
+    
+    # 최종 결과를 가진 태스크 찾기 (일반적으로 가장 마지막에 완료된 태스크)
+    final_task = completed_tasks[-1]  # 가장 최근에 완료된 태스크
+    
+    result = final_task.get("result", {})
+    logger.info(f"최종 태스크 결과 구조: {type(result).__name__}")
+    if isinstance(result, dict):
+        logger.info(f"결과 키: {list(result.keys())}")
+        
+        # 중첩된 result 객체인 경우 내부 키도 로깅
+        if "result" in result and isinstance(result["result"], dict):
+            logger.info(f"내부 result 키: {list(result['result'].keys())}")
+            
+            # content 키가 있는지 확인
+            if "content" in result["result"]:
+                logger.info("content 키 발견! 값 유형: " + type(result["result"]["content"]).__name__)
+                # 값이 너무 길면 일부만 로깅
+                content_preview = str(result["result"]["content"])[:100] + "..." if len(str(result["result"]["content"])) > 100 else str(result["result"]["content"])
+                logger.info(f"content 미리보기: {content_preview}")
+    
+    # 결과 추출 로직
+    message = ""
+    
+    # 직접 content 필드 확인 (가장 일반적인 케이스)
+    if isinstance(result, dict) and "result" in result and isinstance(result["result"], dict):
+        inner_result = result["result"]
+        if "content" in inner_result:
+            logger.info("구조 감지: result.result.content")
+            # 이 부분에서 content를 직접 반환
+            return inner_result["content"]
+    
+    # 1. 직접적인 메시지 필드가 있는 경우
+    if not message and isinstance(result, dict) and "message" in result:
+        logger.info("구조 감지: result.message")
+        message = result["message"]
+    
+    # 2. 중첩된 result 구조에서 message 필드 확인
+    if not message and isinstance(result, dict) and "result" in result and isinstance(result["result"], dict):
+        inner_result = result["result"]
+        if "message" in inner_result:
+            logger.info("구조 감지: result.result.message")
+            message = inner_result["message"]
+    
+    # 3. 문자열 결과인 경우
+    if not message and isinstance(result, str):
+        logger.info("구조 감지: 직접 문자열")
+        message = result
+        
+    # 4. 결과가 리스트인 경우 (여러 에이전트의 결과를 표현할 때)
+    if not message and isinstance(result, list):
+        logger.info("구조 감지: 결과 리스트")
+        # 리스트 내용을 마크다운으로 변환
+        message = "## 에이전트 결과 요약\n\n"
+        for idx, item in enumerate(result):
+            if isinstance(item, dict):
+                agent_role = item.get("role", f"에이전트 {idx+1}")
+                agent_result = item.get("result", "")
+                if agent_result:
+                    message += f"### {agent_role}\n\n{agent_result}\n\n"
+    
+    # 결과가 없는 경우 기본 메시지
+    if not message:
+        logger.warning("결과 메시지를 추출할 수 없습니다: 구조가 예상과 다름")
+        try:
+            # 결과를 JSON으로 변환하여 제공
+            import json
+            message = f"```json\n{json.dumps(result, indent=2, ensure_ascii=False)}\n```"
+        except:
+            message = "처리가 완료되었으나 결과가 없습니다."
+    
+    return message
+
+@app.get("/conversations/{conversation_id}", tags=["conversation"])
+async def get_conversation_by_api(conversation_id: str):
+    """
+    대화 정보 조회 API
+    
+    Args:
+        conversation_id: 대화 ID
+        
+    Returns:
+        대화 정보
     """
     try:
+        if not app.state.context_manager:
+            return {"error": "컨텍스트 관리자가 초기화되지 않았습니다."}
+            
         conversation = await app.state.context_manager.get_conversation(conversation_id)
+        
         if not conversation:
-            # ContextManager에서 None을 반환하면 404 발생
-            raise HTTPException(status_code=404, detail=f"대화 ID {conversation_id}를 찾을 수 없습니다.")
-
-        return conversation
-    except HTTPException as http_exc:
-        # 이미 HTTPException이면 그대로 다시 발생시킴 (404 유지)
-        raise http_exc
+            return {"error": f"대화 {conversation_id}를 찾을 수 없습니다."} 
+        
+        # 응답 데이터 구성
+        final_tasks = []
+        
+        if "tasks" in conversation:
+            final_tasks = conversation["tasks"]
+            
+        response = {
+            "conversation_id": conversation_id,
+            "status": conversation.get("status", "unknown"),
+            "tasks": final_tasks,
+            "message": conversation.get("message", ""),
+            "taskDecomposition": {
+                "original_query": conversation.get("query", ""),
+                "tasks": []
+            }
+        }
+        
+        # 실행 레벨별 자연어 태스크 설명이 있으면 추가
+        if "task_descriptions" in conversation and conversation["task_descriptions"]:
+            response["taskDecomposition"]["tasks"] = []
+            
+            # 각 레벨별 태스크를 플랫하게 변환하여 추가
+            task_index = 0
+            for level_idx, level_tasks in enumerate(conversation["task_descriptions"]):
+                for task_desc in level_tasks:
+                    response["taskDecomposition"]["tasks"].append({
+                        "description": task_desc,
+                        "role": final_tasks[task_index]["role"] if task_index < len(final_tasks) else "unknown",
+                        "index": task_index,
+                        "level": level_idx
+                    })
+                    task_index += 1
+                    
+            # 실행 레벨 정보도 추가
+            execution_levels = []
+            for level_idx, level_tasks in enumerate(conversation["task_descriptions"]):
+                level_indices = []
+                task_offset = 0
+                
+                # 이전 레벨의 태스크 수를 계산하여 오프셋 구하기
+                for i in range(level_idx):
+                    task_offset += len(conversation["task_descriptions"][i])
+                
+                # 현재 레벨의 태스크 인덱스 추가
+                for i in range(len(level_tasks)):
+                    level_indices.append(task_offset + i)
+                
+                execution_levels.append(level_indices)
+            
+            response["execution_levels"] = execution_levels
+        
+        return response
+        
     except Exception as e:
-        logger.error(f"대화 상태 조회 중 오류: {str(e)}")
-        # 그 외 예외는 500 오류로 처리
-        raise HTTPException(status_code=500, detail=f"대화 상태 조회 중 서버 오류 발생: {str(e)}")
+        logger.error(f"대화 정보 조회 중 오류: {str(e)}")
+        return {"error": f"대화 정보 조회 중 오류: {str(e)}"}
 
 # 서버 실행 (직접 실행 시)
 if __name__ == "__main__":

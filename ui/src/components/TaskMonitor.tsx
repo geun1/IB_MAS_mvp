@@ -1,5 +1,5 @@
-import React, { useState } from "react";
-import { useQuery } from "react-query";
+import React, { useState, useEffect, useRef } from "react";
+import { useQuery, useQueryClient } from "react-query";
 import { orchestratorApi } from "../api/orchestrator";
 import { TaskStatus } from "../types";
 import ReactMarkdown from "react-markdown";
@@ -22,14 +22,94 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
     // 선택된 태스크 ID와 세부 정보 모달 상태
     const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
     const [showTaskDetails, setShowTaskDetails] = useState<boolean>(false);
+    const [debugInfo, setDebugInfo] = useState<string>("");
+    const [taskCompleted, setTaskCompleted] = useState<boolean>(false);
+
+    // 폴링 제어 변수
+    const lastPollingTime = useRef<number>(0);
+    const pollingInterval = 3000; // 3초
+    const maxAdditionalPolls = 1;
+    const additionalPollsCount = useRef<number>(0);
+
+    // 쿼리 클라이언트
+    const queryClient = useQueryClient();
 
     // 대화 상태 조회
-    const { data, isLoading, isError } = useQuery(
+    const {
+        data,
+        isLoading,
+        isError,
+        error,
+        remove: removeTaskQuery,
+    } = useQuery(
         ["conversationStatus", taskId],
-        () => orchestratorApi.getConversationStatus(taskId || ""),
+        () => {
+            // 현재 시간 체크
+            const currentTime = Date.now();
+
+            // 마지막 폴링 이후 충분한 시간이 지났는지 확인
+            if (currentTime - lastPollingTime.current < pollingInterval) {
+                console.log("TaskMonitor - 폴링 간격 유지 중...");
+                return Promise.resolve(null);
+            }
+
+            // 폴링 시간 업데이트
+            lastPollingTime.current = currentTime;
+
+            // API 호출
+            return taskId
+                ? orchestratorApi.getConversationStatus(taskId)
+                : null;
+        },
         {
-            enabled: !!taskId,
-            refetchInterval: taskId ? 3000 : false, // 3초마다 갱신
+            enabled: !!taskId && !taskCompleted,
+            refetchInterval: !taskCompleted ? pollingInterval : false,
+            onSuccess: (data) => {
+                if (!data) return;
+
+                console.log("TaskMonitor - 대화 상태 데이터:", data);
+                if (data.tasks) {
+                    console.log("태스크 개수:", data.tasks.length);
+                    setDebugInfo("");
+
+                    // 모든 태스크가 완료되었는지 확인 (completed, failed 등의 최종 상태)
+                    if (
+                        data.status === "completed" ||
+                        data.status === "failed" ||
+                        data.status === "partially_completed"
+                    ) {
+                        // 최대 1번의 추가 폴링 허용 (누락된 결과 확인용)
+                        if (additionalPollsCount.current < maxAdditionalPolls) {
+                            additionalPollsCount.current++;
+                            console.log(
+                                `TaskMonitor - 완료 후 추가 폴링 (${additionalPollsCount.current}/${maxAdditionalPolls})`
+                            );
+                        } else {
+                            console.log("TaskMonitor - 폴링 완전히 중지");
+                            setTaskCompleted(true);
+                            removeTaskQuery();
+
+                            // 캐시에서도 제거
+                            queryClient.removeQueries([
+                                "conversationStatus",
+                                taskId,
+                            ]);
+                        }
+                    }
+                }
+            },
+            onError: (err: any) => {
+                console.error("TaskMonitor - 데이터 조회 오류:", err);
+                setDebugInfo(
+                    JSON.stringify(
+                        err?.response?.data ||
+                            err?.message ||
+                            "알 수 없는 오류",
+                        null,
+                        2
+                    )
+                );
+            },
         }
     );
 
@@ -47,6 +127,15 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
         }
     );
 
+    // 컴포넌트 마운트 시 폴링 시간 초기화
+    useEffect(() => {
+        if (taskId) {
+            lastPollingTime.current = Date.now();
+            additionalPollsCount.current = 0;
+            setTaskCompleted(false);
+        }
+    }, [taskId]);
+
     // 태스크 클릭 핸들러
     const handleTaskClick = (taskId: string) => {
         setSelectedTaskId(taskId);
@@ -62,25 +151,85 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
     const extractTaskResult = (task: any): string => {
         if (!task) return "";
 
-        // result가 객체이고 content 속성이 있는 경우
-        if (
-            task.result &&
-            typeof task.result === "object" &&
-            task.result.result
-        ) {
-            return (
-                task.result.result.content ||
-                JSON.stringify(task.result.result, null, 2)
-            );
-        }
+        console.log("태스크 결과 추출:", task);
 
-        // result가 객체인 경우
-        if (task.result && typeof task.result === "object") {
-            return JSON.stringify(task.result, null, 2);
-        }
+        try {
+            // 결과가 없는 경우
+            if (!task.result) {
+                return "결과 정보가 없습니다.";
+            }
 
-        // result가 문자열인 경우
-        return String(task.result || "");
+            // 결과가 직접 문자열인 경우
+            if (typeof task.result === "string") {
+                console.log("태스크 결과가 직접 문자열");
+                return task.result;
+            }
+
+            // 중첩된 구조: result > result > content
+            if (
+                typeof task.result === "object" &&
+                task.result.result &&
+                typeof task.result.result === "object" &&
+                task.result.result.content
+            ) {
+                console.log("태스크 결과 구조: result.result.content");
+                return String(task.result.result.content);
+            }
+
+            // 중첩된 구조: result > content
+            if (typeof task.result === "object" && task.result.content) {
+                console.log("태스크 결과 구조: result.content");
+                return String(task.result.content);
+            }
+
+            // 중첩된 구조: result > result > message
+            if (
+                typeof task.result === "object" &&
+                task.result.result &&
+                typeof task.result.result === "object" &&
+                task.result.result.message
+            ) {
+                console.log("태스크 결과 구조: result.result.message");
+                return String(task.result.result.message);
+            }
+
+            // 중첩된 구조: result > message
+            if (typeof task.result === "object" && task.result.message) {
+                console.log("태스크 결과 구조: result.message");
+                return String(task.result.message);
+            }
+
+            // 중첩된 구조: result > result (문자열)
+            if (
+                typeof task.result === "object" &&
+                task.result.result &&
+                typeof task.result.result === "string"
+            ) {
+                console.log("태스크 결과 구조: result.result (문자열)");
+                return task.result.result;
+            }
+
+            // 중첩된 구조: result > result (객체)
+            if (
+                typeof task.result === "object" &&
+                task.result.result &&
+                typeof task.result.result === "object"
+            ) {
+                console.log("태스크 결과 구조: result.result (객체)");
+                return JSON.stringify(task.result.result, null, 2);
+            }
+
+            // 기본: result 객체 전체를 JSON으로 변환
+            if (typeof task.result === "object") {
+                console.log("태스크 결과 구조: result (객체)");
+                return JSON.stringify(task.result, null, 2);
+            }
+
+            return "결과 형식을 해석할 수 없습니다.";
+        } catch (error) {
+            console.error("태스크 결과 추출 중 오류:", error);
+            return "결과 추출 중 오류가 발생했습니다.";
+        }
     };
 
     // 태스크 세부 정보 모달
@@ -151,7 +300,7 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
                                     <div className="font-medium mb-2">
                                         결과:
                                     </div>
-                                    <div className="bg-gray-50 p-4 rounded-md overflow-x-auto">
+                                    <div className="bg-gray-50 p-4 rounded-md overflow-x-auto prose prose-sm max-w-none">
                                         <ReactMarkdown>
                                             {extractTaskResult(selectedTask)}
                                         </ReactMarkdown>
@@ -189,20 +338,36 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
                 <h3 className="text-lg font-semibold mb-4">태스크 진행 상황</h3>
                 <div className="text-red-500 p-4">
                     태스크 정보를 불러오는 중 오류가 발생했습니다.
+                    {debugInfo && (
+                        <pre className="mt-2 text-xs bg-gray-100 p-2 rounded overflow-x-auto">
+                            {debugInfo}
+                        </pre>
+                    )}
                 </div>
             </div>
         );
     }
 
-    // 태스크가 없는 경우
-    const tasks = data?.tasks || [];
-    if (tasks.length === 0) {
+    // 태스크가 없거나 데이터가 없는 경우
+    if (!data || !data.tasks || data.tasks.length === 0) {
         return (
             <div className={`bg-white rounded-lg shadow-md p-6 ${className}`}>
                 <h3 className="text-lg font-semibold mb-4">태스크 진행 상황</h3>
                 <div className="text-gray-500 p-4">
-                    진행 중인 태스크가 없습니다.
+                    처리 중인 태스크가 없습니다.
                 </div>
+                {data && (
+                    <div className="mt-2 text-sm">
+                        <div>대화 ID: {data.conversation_id}</div>
+                        <div>상태: {data.status}</div>
+                        {data.message && (
+                            <div className="mt-2">
+                                <span className="font-medium">메시지:</span>{" "}
+                                {data.message}
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
         );
     }
@@ -212,7 +377,7 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
         <div className={`bg-white rounded-lg shadow-md p-6 ${className}`}>
             <h3 className="text-lg font-semibold mb-4">태스크 진행 상황</h3>
             <div className="space-y-2">
-                {tasks.map((task: any, index: number) => (
+                {data.tasks.map((task: any, index: number) => (
                     <div
                         key={index}
                         className="border rounded-md p-3 hover:bg-gray-50 cursor-pointer transition-colors"

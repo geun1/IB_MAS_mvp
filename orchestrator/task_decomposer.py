@@ -51,7 +51,7 @@ class TaskDecomposer:
         logger.info(f"{len(agent_info)}개의 에이전트 역할 정보 조회 완료")
         return agent_info
     
-    async def decompose_query(self, query: str, conversation_id: str = None, user_id: str = None) -> Tuple[List[Dict[str, Any]], List[List[int]]]:
+    async def decompose_query(self, query: str, conversation_id: str = None, user_id: str = None) -> Tuple[List[Dict[str, Any]], List[List[int]], List[List[str]]]:
         """
         쿼리를 태스크로 분해
         
@@ -61,7 +61,7 @@ class TaskDecomposer:
             user_id: 사용자 ID
             
         Returns:
-            태스크 목록과 실행 레벨별 태스크 인덱스 목록의 튜플
+            태스크 목록, 실행 레벨별 태스크 인덱스 목록, 실행 레벨별 자연어 태스크 설명 목록의 튜플
         """
         logger.info(f"쿼리 분해 시작: '{query}'")
         
@@ -69,7 +69,7 @@ class TaskDecomposer:
         agents_info = await self._get_agent_roles()
         if not agents_info:
             logger.warning("사용 가능한 에이전트가 없습니다")
-            return [], []
+            return [], [], []
         
         # 역할별 에이전트 기능 사전 생성
         agent_capabilities = {}
@@ -112,13 +112,20 @@ class TaskDecomposer:
             execution_levels.append(current_level)
             remaining -= set(current_level)
         
+        # 자연어 태스크 설명 목록 생성
+        natural_language_tasks = []
+        
         # 로깅 강화: 태스크 간 의존성 정보 출력
         for level_idx, level in enumerate(execution_levels):
             tasks_in_level = [tasks[idx]["description"] for idx in level]
             logger.info(f"실행 레벨 {level_idx+1}: {tasks_in_level}")
+            # 자연어 설명 목록에 추가
+            natural_language_tasks.append(tasks_in_level)
         
         logger.info(f"쿼리 분해 완료: {len(tasks)}개의 태스크 생성됨")
-        return tasks, execution_levels
+        
+        # 자연어 태스크 설명도 함께 반환
+        return tasks, execution_levels, natural_language_tasks
         
     async def _decompose_with_llm(self, query: str, agent_capabilities: Dict[str, Any]) -> Dict[str, Any]:
         """
