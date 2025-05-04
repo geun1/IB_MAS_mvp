@@ -50,20 +50,21 @@ class OrchestratorLLMClient:
         self.max_tokens = LLM_MAX_TOKENS
         logger.info(f"LLM 클라이언트 초기화 완료 (기본 모델: {self.model})")
     
-    async def decompose_tasks(self, user_query: str, available_roles: str) -> Dict[str, Any]:
+    async def decompose_tasks(self, user_query: str, available_roles: str, agents_detail: str = None) -> Dict[str, Any]:
         """
         사용자 요청을 여러 태스크로 분해
         
         Args:
             user_query: 사용자 질의
             available_roles: 사용 가능한 에이전트 역할 정보
+            agents_detail: 에이전트 상세 정보 (선택적)
             
         Returns:
             분해된 태스크 정보
         """
         try:
             # 프롬프트 생성
-            prompt = create_task_decomposition_prompt(user_query, available_roles)
+            prompt = create_task_decomposition_prompt(user_query, available_roles, agents_detail)
             
             # LLM API 호출
             logger.info(f"LLM API 호출: 태스크 분해 (쿼리: {user_query[:50]}...)")

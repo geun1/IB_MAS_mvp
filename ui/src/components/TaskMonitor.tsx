@@ -24,6 +24,7 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
     const [showTaskDetails, setShowTaskDetails] = useState<boolean>(false);
     const [debugInfo, setDebugInfo] = useState<string>("");
     const [taskCompleted, setTaskCompleted] = useState<boolean>(false);
+    const [expandedTasks, setExpandedTasks] = useState<number[]>([]); // 확장된 태스크 인덱스 추적
 
     // 폴링 제어 변수
     const lastPollingTime = useRef<number>(0);
@@ -133,6 +134,7 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
             lastPollingTime.current = Date.now();
             additionalPollsCount.current = 0;
             setTaskCompleted(false);
+            setExpandedTasks([]); // 새 태스크 시작시 확장된 태스크 목록 초기화
         }
     }, [taskId]);
 
@@ -140,6 +142,15 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
     const handleTaskClick = (taskId: string) => {
         setSelectedTaskId(taskId);
         setShowTaskDetails(true);
+    };
+
+    // 태스크 드롭다운 토글 핸들러
+    const toggleTaskExpansion = (index: number) => {
+        setExpandedTasks((prev) =>
+            prev.includes(index)
+                ? prev.filter((i) => i !== index)
+                : [...prev, index]
+        );
     };
 
     // 모달 닫기 핸들러
@@ -157,6 +168,16 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
             // 결과가 없는 경우
             if (!task.result) {
                 return "결과 정보가 없습니다.";
+            }
+
+            // stock_data_agent 결과 구조 처리 (data 객체)
+            if (typeof task.result === "object" && task.result.data) {
+                console.log("stock_data_agent 구조 감지: result.data");
+                return `주식 데이터 결과:\n\`\`\`json\n${JSON.stringify(
+                    task.result.data,
+                    null,
+                    2
+                )}\n\`\`\``;
             }
 
             // 결과가 직접 문자열인 경우
@@ -380,10 +401,12 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
                 {data.tasks.map((task: any, index: number) => (
                     <div
                         key={index}
-                        className="border rounded-md p-3 hover:bg-gray-50 cursor-pointer transition-colors"
-                        onClick={() => handleTaskClick(task)}
+                        className="border rounded-md overflow-hidden"
                     >
-                        <div className="flex items-center justify-between">
+                        <div
+                            className="bg-gray-50 p-3 cursor-pointer hover:bg-gray-100 transition-colors flex items-center justify-between"
+                            onClick={() => toggleTaskExpansion(index)}
+                        >
                             <div className="flex items-center">
                                 <span
                                     className={`inline-block w-3 h-3 rounded-full mr-2 ${
@@ -402,17 +425,64 @@ const TaskMonitor: React.FC<TaskMonitorProps> = ({
                                         : task.role || `태스크 ${index + 1}`}
                                 </span>
                             </div>
-                            <span className="text-sm text-gray-500">
-                                {typeof task === "string"
-                                    ? task.substring(0, 8) + "..."
-                                    : task.status || "불명"}
-                            </span>
+                            <div className="flex items-center">
+                                <span className="text-sm text-gray-500 mr-2">
+                                    {typeof task === "string"
+                                        ? task.substring(0, 8) + "..."
+                                        : task.status || "불명"}
+                                </span>
+                                <svg
+                                    className={`w-4 h-4 transition-transform ${
+                                        expandedTasks.includes(index)
+                                            ? "transform rotate-180"
+                                            : ""
+                                    }`}
+                                    fill="none"
+                                    stroke="currentColor"
+                                    viewBox="0 0 24 24"
+                                >
+                                    <path
+                                        strokeLinecap="round"
+                                        strokeLinejoin="round"
+                                        strokeWidth="2"
+                                        d="M19 9l-7 7-7-7"
+                                    />
+                                </svg>
+                            </div>
                         </div>
-                        <div className="mt-1 text-sm text-gray-600 truncate">
-                            {typeof task === "string"
-                                ? "클릭하여 세부 정보 보기"
-                                : task.description || "클릭하여 세부 정보 보기"}
-                        </div>
+
+                        {expandedTasks.includes(index) && (
+                            <div className="p-3 bg-white border-t">
+                                <div className="text-sm text-gray-600 mb-2">
+                                    {typeof task === "string"
+                                        ? "설명 없음"
+                                        : task.description || "설명 없음"}
+                                </div>
+
+                                {task.result && (
+                                    <div className="mt-3">
+                                        <div className="text-xs font-medium text-gray-500 mb-1">
+                                            결과:
+                                        </div>
+                                        <div className="bg-gray-50 p-2 rounded text-xs overflow-x-auto prose prose-sm max-w-none">
+                                            <ReactMarkdown>
+                                                {extractTaskResult(task)}
+                                            </ReactMarkdown>
+                                        </div>
+                                    </div>
+                                )}
+
+                                <button
+                                    onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleTaskClick(task.id);
+                                    }}
+                                    className="mt-2 text-xs text-blue-500 hover:text-blue-700"
+                                >
+                                    상세 보기
+                                </button>
+                            </div>
+                        )}
                     </div>
                 ))}
             </div>

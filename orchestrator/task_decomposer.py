@@ -82,14 +82,103 @@ class TaskDecomposer:
                 "capabilities": capabilities
             }
         
-        logger.info("에이전트 역할 정보 조회 완료")
+        logger.info(f"에이전트 역할 정보 조회 완료: {len(agent_capabilities)}개의 에이전트 발견")
         
         # LLM을 사용하여 태스크 분해
-        roles_description = await self.registry_client.generate_role_descriptions()
-        decomposition_result = await self.llm_client.decompose_tasks(query, roles_description)
+        # 등록된 에이전트의 상세 정보를 활용하여 더 정확한 태스크 분해 수행
+        detailed_roles_description = await self.registry_client.generate_detailed_role_descriptions()
         
+        # 사용 가능한 모든 에이전트에 대한 자세한 능력과 파라미터 정보 제공
+        agents_detail = self._format_agent_details(agents_info)
+        
+        # 태스크 분해 수행 (사용 가능한 에이전트의 상세 정보 포함)
+        decomposition_result = await self.llm_client.decompose_tasks(
+            query, 
+            detailed_roles_description,
+            agents_detail=agents_detail
+        )
+
         # 태스크 목록 및 실행 레벨 추출
         tasks = decomposition_result.get("tasks", [])
+        
+        # 태스크 파라미터 검증 및 수정
+        for task in tasks:
+            role = task.get("role")
+            params = task.get("params", {})
+            
+            # stock_analysis 에이전트 처리 - 문자열로 된 stock_data 처리
+            if role == "stock_analysis" and "stock_data" in params:
+                if isinstance(params["stock_data"], str):
+                    str_value = params["stock_data"]
+                    logger.warning(f"문자열 형태의 stock_data 파라미터 발견: {str_value}")
+                    
+                    if str_value.lower() in ["이전 태스크의 결과", "previous task result", "stock_data", "의존성", "depends"]:
+                        # 의존성 결과로부터 데이터를 사용할 것임을 알려주는 일반적인 문자열인 경우
+                        logger.info("의존성 데이터 참조 문자열로 판단하여 빈 객체로 초기화")
+                        params["stock_data"] = {}  # 빈 객체로 설정
+                    else:
+                        # LLM을 사용하여 문자열을 분석하고 필요한 경우 구조화된 데이터로 변환 시도
+                        logger.info("LLM을 사용하여 문자열 분석 시도")
+                        try:
+                            # 프롬프트 작성
+                            prompt = f"""
+다음 문자열은 주식 분석에 필요한 데이터에 대한 설명입니다:
+"{str_value}"
+
+이 설명을 기반으로, 주식 분석 API에 사용할 수 있는 적절한 JSON 구조의 데이터를 생성해 주세요.
+가능하다면, 아래와 유사한 형태의 Time Series 데이터 구조로 응답해 주세요:
+
+```json
+{{
+  "Meta Data": {{
+    "1. Information": "Daily Prices",
+    "2. Symbol": "[적절한 주식 심볼]"
+  }},
+  "Time Series (Daily)": {{
+    "2023-01-01": {{
+      "1. open": "100.00",
+      "2. high": "105.00",
+      "3. low": "99.00",
+      "4. close": "102.50",
+      "5. volume": "10000"
+    }}
+  }}
+}}
+```
+
+또는 쿼리에서 주식 정보가 충분하지 않다면, 빈 객체 {{}}를 반환하고 그 이유를 설명해 주세요.
+응답은 유효한 JSON 형태로만 제공해 주세요.
+"""
+                            # LLM 호출하여 구조화된 데이터 생성 시도
+                            response = await self.llm_client.ask(prompt)
+                            
+                            # JSON 추출 시도
+                            try:
+                                # 응답에서 JSON 부분 추출
+                                import re
+                                json_match = re.search(r'```json\s*([\s\S]*?)\s*```', response)
+                                
+                                if json_match:
+                                    json_str = json_match.group(1).strip()
+                                else:
+                                    # JSON 블록이 없으면 응답 전체를 JSON으로 해석 시도
+                                    json_str = response.strip()
+                                
+                                # JSON 파싱
+                                structured_data = json.loads(json_str)
+                                
+                                if structured_data and isinstance(structured_data, dict):
+                                    logger.info("LLM을 통해 문자열을 구조화된 데이터로 변환 성공")
+                                    params["stock_data"] = structured_data
+                                else:
+                                    logger.warning("LLM이 유효한 데이터를 생성하지 못함, 빈 객체 사용")
+                                    params["stock_data"] = {}
+                            except Exception as e:
+                                logger.error(f"JSON 파싱 실패: {str(e)}, 빈 객체 사용")
+                                params["stock_data"] = {}
+                        except Exception as e:
+                            logger.error(f"LLM 호출 실패: {str(e)}, 빈 객체 사용")
+                            params["stock_data"] = {}
         
         # 의존성 그래프 구성 및 실행 레벨 결정
         # 모든 태스크의 의존성 관계를 분석하여 실행 순서 결정
@@ -146,10 +235,18 @@ class TaskDecomposer:
             
             if info["capabilities"]:
                 caps = info["capabilities"]
-                roles_description += "  지원 기능: " + ", ".join(caps) + "\n"
+                param_details = []
+                for cap in caps:
+                    param_name = cap.get("name", "")
+                    param_desc = cap.get("description", "")
+                    param_required = "필수" if cap.get("required", False) else "선택"
+                    param_details.append(f"{param_name} ({param_required}): {param_desc}")
+                    
+                roles_description += "  파라미터: " + "\n    - ".join([""] + param_details) + "\n"
                 
         # LLM 호출
-        decomposition_result = await self.llm_client.decompose_tasks(query, roles_description)
+        agents_detail = self._format_agent_details(agent_capabilities)
+        decomposition_result = await self.llm_client.decompose_tasks(query, roles_description, agents_detail=agents_detail)
         return decomposition_result
 
     def analyze_dependencies(self, tasks: List[Task]) -> List[List[int]]:
@@ -187,3 +284,37 @@ class TaskDecomposer:
             remaining -= set(current_level)
         
         return levels 
+
+    def _format_agent_details(self, agents_info: List[Dict[str, Any]]) -> str:
+        """
+        에이전트 상세 정보를 포맷팅하여 LLM에게 전달할 문자열 생성
+        
+        Args:
+            agents_info: 에이전트 정보 목록
+            
+        Returns:
+            포맷팅된 에이전트 상세 정보 문자열
+        """
+        result = "## 사용 가능한 에이전트 정보\n\n"
+        
+        for agent in agents_info:
+            role = agent.get("role", "알 수 없음")
+            description = agent.get("description", "설명 없음")
+            capabilities = agent.get("capabilities", [])
+            
+            result += f"### {role}\n"
+            result += f"{description}\n\n"
+            
+            if capabilities:
+                result += "#### 파라미터:\n"
+                for param in capabilities:
+                    param_name = param.get("name", "알 수 없음")
+                    param_desc = param.get("description", "설명 없음")
+                    param_type = param.get("type", "string")
+                    required = "필수" if param.get("required", False) else "선택"
+                    
+                    result += f"- **{param_name}** ({param_type}, {required}): {param_desc}\n"
+            
+            result += "\n"
+        
+        return result 

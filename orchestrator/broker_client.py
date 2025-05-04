@@ -53,13 +53,137 @@ class BrokerClient:
                 "conversation_id": conversation_id
             }
             
-            # 컨텍스트 정보가 있는 경우 추가
-            if context and "depends_results" in context:
+            # 컨텍스트 정보가 있는 경우 추가 및 처리
+            if context:
+                # 컨텍스트 구조 로깅
+                logger.info(f"컨텍스트 키: {list(context.keys())}")
                 task_data["context"] = context
-                depends_results = context.get("depends_results", [])
-                logger.info(f"컨텍스트에 {len(depends_results)}개의 의존성 결과 포함됨")
                 
-                # 태스크가 writer이고 code_generator 결과가 있는 경우, 파라미터에 코드 내용 직접 추가
+                # 의존성 결과가 있는지 확인
+                if "depends_results" in context:
+                    depends_results = context.get("depends_results", [])
+                    logger.info(f"컨텍스트에 {len(depends_results)}개의 의존성 결과 포함됨")
+                    
+                    # 로그에 각 의존성 결과의 구조 출력
+                    for i, dep in enumerate(depends_results):
+                        if not isinstance(dep, dict):
+                            logger.warning(f"의존성 결과 {i+1}가 딕셔너리가 아님: {type(dep)}")
+                            continue
+                            
+                        dep_role = dep.get("role", "unknown")
+                        logger.info(f"의존성 결과 {i+1} - 역할: {dep_role}, 구조: {list(dep.keys())}")
+                        
+                        # 태스크 ID 정보 로깅
+                        if "task_id" in dep:
+                            logger.info(f"의존성 결과 {i+1} - 태스크 ID: {dep['task_id']}")
+                        
+                        # result 필드가 있는 경우 그 구조도 확인
+                        if "result" in dep and isinstance(dep["result"], dict):
+                            result_keys = list(dep["result"].keys())
+                            logger.info(f"의존성 결과 {i+1}의 result 필드 구조: {result_keys}")
+                            
+                            # result 필드 내부의 result 필드 확인 (중첩된 구조)
+                            if "result" in dep["result"] and isinstance(dep["result"]["result"], dict):
+                                inner_result_keys = list(dep["result"]["result"].keys())
+                                logger.info(f"의존성 결과 {i+1}의 중첩 result 필드 구조: {inner_result_keys}")
+                            
+                            # raw_data 필드가 있는지 확인
+                            if "raw_data" in dep["result"]:
+                                raw_data = dep["result"]["raw_data"]
+                                raw_data_type = type(raw_data).__name__
+                                if isinstance(raw_data, dict):
+                                    raw_data_keys = list(raw_data.keys())
+                                    logger.info(f"의존성 결과 {i+1}에 raw_data 필드가 있습니다. 타입: {raw_data_type}, 키: {raw_data_keys}")
+                                else:
+                                    logger.info(f"의존성 결과 {i+1}에 raw_data 필드가 있습니다. 타입: {raw_data_type}")
+                                    
+                            # data 필드가 있는지 확인    
+                            if "data" in dep["result"]:
+                                data = dep["result"]["data"]
+                                data_type = type(data).__name__
+                                if isinstance(data, dict):
+                                    data_keys = list(data.keys())
+                                    logger.info(f"의존성 결과 {i+1}에 data 필드가 있습니다. 타입: {data_type}, 키: {data_keys}")
+                                else:
+                                    logger.info(f"의존성 결과 {i+1}에 data 필드가 있습니다. 타입: {data_type}")
+                                
+                    # 특별 처리: stock_analysis 태스크인 경우 stock_data_agent 결과 직접 전달
+                    if role == "stock_analysis" or role == "stock_analysis_agent":
+                        # 1. 이전 결과가 stock_data_agent인지 확인하는 함수
+                        def find_stock_data_result(results):
+                            for i, res in enumerate(results):
+                                if isinstance(res, dict):
+                                    # 역할이 stock_data인 결과 찾기
+                                    if res.get("role") == "stock_data":
+                                        logger.info(f"stock_data 역할의 결과 발견 (인덱스: {i})")
+                                        return res
+                            return None
+                        
+                        # 2. stock_data_agent 결과 찾기
+                        stock_data_result = find_stock_data_result(depends_results)
+                        if stock_data_result:
+                            logger.info("stock_data_agent 결과를 찾았습니다")
+                            
+                            # 3. result 필드 구조 확인
+                            if "result" in stock_data_result and isinstance(stock_data_result["result"], dict):
+                                result_data = stock_data_result["result"]
+                                logger.info(f"stock_data_agent의 result 필드 구조: {list(result_data.keys())}")
+                                
+                                # 4. 다양한 위치에서 주식 데이터 추출 시도
+                                stock_data = None
+                                
+                                # 4.1. raw_data 필드 확인
+                                if "raw_data" in result_data and result_data["raw_data"]:
+                                    stock_data = result_data["raw_data"]
+                                    logger.info("raw_data 필드에서 주식 데이터 추출 성공")
+                                    
+                                # 4.2. data 필드 확인
+                                elif "data" in result_data and result_data["data"]:
+                                    stock_data = result_data["data"]
+                                    logger.info("data 필드에서 주식 데이터 추출 성공")
+                                    
+                                # 4.3. result 내의 중첩된 필드 확인
+                                elif "result" in result_data and isinstance(result_data["result"], dict):
+                                    inner_result = result_data["result"]
+                                    
+                                    # 4.3.1. 중첩된 data 필드 확인
+                                    if "data" in inner_result and inner_result["data"]:
+                                        stock_data = inner_result["data"]
+                                        logger.info("중첩 result.data 필드에서 주식 데이터 추출 성공")
+                                    
+                                    # 4.3.2. 중첩된 raw_data 필드 확인
+                                    elif "raw_data" in inner_result and inner_result["raw_data"]:
+                                        stock_data = inner_result["raw_data"]
+                                        logger.info("중첩 result.raw_data 필드에서 주식 데이터 추출 성공")
+                                
+                                # 5. 데이터 추출에 성공했는지 확인 및 파라미터에 추가
+                                if stock_data:
+                                    data_type = type(stock_data).__name__
+                                    if isinstance(stock_data, dict):
+                                        logger.info(f"추출된 주식 데이터: 타입={data_type}, 키={list(stock_data.keys())}")
+                                    else:
+                                        logger.info(f"추출된 주식 데이터: 타입={data_type}")
+                                    
+                                    # 태스크 파라미터에 데이터 추가
+                                    task_data["params"]["stock_data"] = stock_data
+                                    task_data["params"]["source_task_id"] = stock_data_result.get("task_id", "unknown")
+                                    logger.info("주식 데이터를 태스크 파라미터에 성공적으로 추가했습니다")
+                                else:
+                                    logger.warning("stock_data_agent 결과에서 데이터를 추출할 수 없습니다")
+                                    
+                                    # 원본 데이터 직접 전달
+                                    task_data["params"]["source_result"] = result_data
+                                    logger.info("원본 결과 데이터를 source_result 필드로 전달합니다")
+                            else:
+                                logger.warning("stock_data_agent 결과에 result 필드가 없거나 딕셔너리가 아닙니다")
+                        else:
+                            logger.warning("stock_data 역할의 결과를 찾을 수 없습니다")
+                            
+                            # 의존성 결과 전체를 그대로 태스크에 전달
+                            task_data["depends_results"] = depends_results
+                            logger.info("모든 의존성 결과를 태스크에 직접 추가했습니다")
+                
+                # writer 태스크인 경우 code_generator의 결과를 직접 전달
                 if role == "writer":
                     for dep_result in depends_results:
                         if dep_result.get("role") == "code_generator":
@@ -81,6 +205,9 @@ class BrokerClient:
                                     
                                     logger.info(f"writer 태스크에 코드 내용 추가됨: {list(code_files.keys())}")
                                     break
+            
+            # 요청 데이터 로깅
+            logger.info(f"브로커 요청 데이터: {task_data}")
             
             # API 요청 전송
             async with httpx.AsyncClient() as client:

@@ -16,6 +16,7 @@ const ResultViewer: React.FC<ResultViewerProps> = ({
     // 마크다운 테이블을 HTML 테이블로 변환한 내용 저장
     const [renderedContent, setRenderedContent] = useState<string>("");
     const [hasResult, setHasResult] = useState<boolean>(false);
+    const [isExpanded, setIsExpanded] = useState<boolean>(false); // 결과 확장 상태
 
     // 폴링 제어 변수
     const lastPollingTime = useRef<number>(0);
@@ -66,19 +67,34 @@ const ResultViewer: React.FC<ResultViewerProps> = ({
                     data.status === "partially_completed"
                 ) {
                     const msg = extractMessage(data);
+                    console.log(
+                        "ResultViewer - 추출된 메시지:",
+                        msg ? msg.substring(0, 50) + "..." : "없음"
+                    );
+
                     if (msg) {
-                        // 최대 1번의 추가 폴링 허용 (누락된 결과 확인용)
+                        // 결과가 있으면 화면에 표시
+                        setRenderedContent(convertMarkdownTablesToHtml(msg));
+
+                        // 결과 데이터가 있음을 표시하고 폴링 중지
+                        setHasResult(true);
+                        console.log("ResultViewer - 결과 있음, 폴링 중지");
+                        removeResultQuery();
+                        queryClient.removeQueries([
+                            "conversationResult",
+                            taskId,
+                        ]);
+                    } else {
+                        // 추가 폴링 시도
                         if (additionalPollsCount.current < maxAdditionalPolls) {
                             additionalPollsCount.current++;
                             console.log(
                                 `ResultViewer - 완료 후 추가 폴링 (${additionalPollsCount.current}/${maxAdditionalPolls})`
                             );
                         } else {
-                            console.log("ResultViewer - 결과 있음, 폴링 중지");
+                            console.log("ResultViewer - 결과 없음, 폴링 중지");
                             setHasResult(true);
                             removeResultQuery();
-
-                            // 캐시에서도 제거
                             queryClient.removeQueries([
                                 "conversationResult",
                                 taskId,
@@ -90,12 +106,38 @@ const ResultViewer: React.FC<ResultViewerProps> = ({
         }
     );
 
-    // 컴포넌트 마운트 시 폴링 시간 초기화
+    // taskId가 변경되면 상태 초기화 - 새 대화 시작
     useEffect(() => {
         if (taskId) {
             lastPollingTime.current = Date.now();
             additionalPollsCount.current = 0;
             setHasResult(false);
+            setRenderedContent("");
+            setIsExpanded(false); // 새 태스크 시작시 확장 상태 초기화
+
+            // 이미 완료된 대화인 경우 즉시 데이터 가져오기
+            if (taskId) {
+                orchestratorApi
+                    .getConversationStatus(taskId)
+                    .then((response) => {
+                        if (
+                            response &&
+                            (response.status === "completed" ||
+                                response.status === "partially_completed")
+                        ) {
+                            const msg = extractMessage(response);
+                            if (msg) {
+                                setRenderedContent(
+                                    convertMarkdownTablesToHtml(msg)
+                                );
+                                setHasResult(true);
+                            }
+                        }
+                    })
+                    .catch((err) =>
+                        console.error("이전 대화 데이터 로딩 오류:", err)
+                    );
+            }
         }
     }, [taskId]);
 
@@ -115,6 +157,20 @@ const ResultViewer: React.FC<ResultViewerProps> = ({
         if (typeof data === "string") {
             console.log("결과가 직접 문자열");
             return data;
+        }
+
+        // 중첩 구조: result > data - stock_data_agent용
+        if (data.result && data.result.data) {
+            console.log("stock_data_agent 구조 감지: result.data");
+            try {
+                return `주식 데이터 결과:\n\`\`\`json\n${JSON.stringify(
+                    data.result.data,
+                    null,
+                    2
+                )}\n\`\`\``;
+            } catch (e) {
+                console.error("JSON 변환 오류:", e);
+            }
         }
 
         // 중첩 구조: result > result > content
@@ -170,6 +226,22 @@ const ResultViewer: React.FC<ResultViewerProps> = ({
                 const lastTask = completedTasks[completedTasks.length - 1];
 
                 if (lastTask.result) {
+                    // stock_data_agent 결과 구조 처리
+                    if (lastTask.result.data) {
+                        console.log(
+                            "stock_data_agent 구조 감지: task.result.data"
+                        );
+                        try {
+                            return `주식 데이터 결과:\n\`\`\`json\n${JSON.stringify(
+                                lastTask.result.data,
+                                null,
+                                2
+                            )}\n\`\`\``;
+                        } catch (e) {
+                            console.error("JSON 변환 오류:", e);
+                        }
+                    }
+
                     // 태스크 결과에서 중첩 구조 확인
                     if (
                         lastTask.result.result &&
@@ -244,134 +316,172 @@ const ResultViewer: React.FC<ResultViewerProps> = ({
 
         return content.replace(
             tableRegex,
-            (match, headerRow, separatorRow, bodyRows) => {
+            (
+                match: string,
+                headerRow: string,
+                separatorRow: string,
+                bodyRows: string
+            ) => {
                 try {
                     // 헤더 처리
                     const headers = headerRow
                         .split("|")
                         .map((cell: string) => cell.trim())
-                        .filter(Boolean);
+                        .filter((cell: string) => cell);
 
-                    // 본문 처리
-                    const rows = bodyRows.trim().split("\n");
+                    // 구분자 처리 (정렬 정보 포함)
+                    const alignments = separatorRow
+                        .split("|")
+                        .map((sep: string) => sep.trim())
+                        .filter((sep: string) => sep)
+                        .map((sep: string) => {
+                            if (sep.startsWith(":") && sep.endsWith(":"))
+                                return "center";
+                            if (sep.endsWith(":")) return "right";
+                            return "left";
+                        });
 
-                    // HTML 테이블 생성
-                    let htmlTable =
-                        '<div class="overflow-x-auto my-4 rounded-lg border border-gray-300 shadow">';
-                    htmlTable +=
-                        '<table class="min-w-full border-collapse table-fixed">';
-
-                    // 헤더 추가
-                    htmlTable += '<thead class="bg-gray-100"><tr>';
-                    headers.forEach((header: string) => {
-                        htmlTable += `<th class="border-b border-r last:border-r-0 border-gray-300 px-4 py-3 text-left font-semibold text-gray-700 text-sm">${header}</th>`;
-                    });
-                    htmlTable += "</tr></thead>";
-
-                    // 본문 추가
-                    htmlTable += '<tbody class="divide-y divide-gray-200">';
-                    rows.forEach((row: string) => {
-                        if (row.trim()) {
-                            const cells = row
+                    // 바디 처리
+                    const rows = bodyRows
+                        .trim()
+                        .split("\n")
+                        .map((row: string) =>
+                            row
                                 .split("|")
                                 .map((cell: string) => cell.trim())
-                                .filter(Boolean);
-                            htmlTable += '<tr class="hover:bg-gray-50">';
-                            cells.forEach((cell: string) => {
-                                // <br> 태그를 실제 줄바꿈으로 변환
-                                const processedCell = cell.replace(
-                                    /<br>/g,
-                                    "<br/>"
-                                );
-                                htmlTable += `<td class="border-b border-r last:border-r-0 border-gray-300 px-4 py-3 text-gray-800 text-sm align-middle whitespace-pre-line">${processedCell}</td>`;
-                            });
-                            htmlTable += "</tr>";
-                        }
+                                .filter((cell: string) => cell !== "")
+                        );
+
+                    // HTML 테이블 생성
+                    let htmlTable = `<div class="overflow-x-auto">
+                        <table class="min-w-full divide-y divide-gray-200">
+                            <thead class="bg-gray-50">
+                                <tr>`;
+
+                    // 헤더 셀 추가
+                    headers.forEach((header: string, index: number) => {
+                        const alignment =
+                            index < alignments.length
+                                ? alignments[index]
+                                : "left";
+                        htmlTable += `<th scope="col" class="px-6 py-3 text-${alignment} text-xs font-medium text-gray-500 uppercase tracking-wider">${header}</th>`;
                     });
-                    htmlTable += "</tbody></table></div>";
+
+                    htmlTable += `</tr>
+                            </thead>
+                            <tbody class="bg-white divide-y divide-gray-200">`;
+
+                    // 행 추가
+                    rows.forEach((row: string[], rowIndex: number) => {
+                        htmlTable += `<tr class="${
+                            rowIndex % 2 === 0 ? "bg-white" : "bg-gray-50"
+                        }">`;
+                        row.forEach((cell: string, cellIndex: number) => {
+                            const alignment =
+                                cellIndex < alignments.length
+                                    ? alignments[cellIndex]
+                                    : "left";
+                            htmlTable += `<td class="px-6 py-4 whitespace-normal text-${alignment} text-sm text-gray-500">${cell}</td>`;
+                        });
+                        htmlTable += "</tr>";
+                    });
+
+                    htmlTable += `</tbody>
+                        </table>
+                    </div>`;
 
                     return htmlTable;
-                } catch (e) {
-                    console.error("테이블 변환 오류:", e);
+                } catch (error) {
+                    console.error("테이블 변환 오류:", error);
                     return match; // 오류 발생 시 원본 반환
                 }
             }
         );
     };
 
-    // 추출된 메시지
-    const message = extractMessage(data);
+    const content = data ? extractMessage(data) : "";
 
-    // 메시지가 변경될 때마다 HTML 변환 및 이벤트 발행
     useEffect(() => {
-        if (message) {
-            const html = convertMarkdownTablesToHtml(message);
-            setRenderedContent(html);
-
-            // 처음 결과가 로드되거나 새로운 결과가 있을 때 이벤트 발행
-            if (message !== lastMessageSent.current) {
-                console.log(
-                    "최종 결과 이벤트 발행:",
-                    message.substring(0, 50) + "..."
-                );
-                eventEmitter.emit("finalResult", {
-                    content: message,
-                    timestamp: new Date(),
-                    conversationId: taskId,
-                });
-                lastMessageSent.current = message;
-            }
-        } else {
-            setRenderedContent("");
+        if (content && content !== lastMessageSent.current) {
+            setRenderedContent(convertMarkdownTablesToHtml(content));
+            lastMessageSent.current = content;
         }
-    }, [message, taskId]);
+    }, [content]);
 
-    // 로딩 중 표시
-    if (isLoading) {
+    // 결과 확장/축소 토글
+    const toggleExpansion = () => {
+        setIsExpanded(!isExpanded);
+    };
+
+    if (isLoading && !renderedContent) {
         return (
-            <div className={`bg-white rounded-lg shadow-md p-6 ${className}`}>
-                <h3 className="text-lg font-semibold mb-4">결과</h3>
-                <div className="flex items-center justify-center p-8">
-                    <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
-                    <span className="ml-2">결과 로딩 중...</span>
-                </div>
+            <div
+                className={`${className} p-4 bg-white rounded-lg shadow-md text-center`}
+            >
+                <div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full inline-block"></div>
+                <p className="mt-2 text-gray-600">결과를 가져오는 중...</p>
             </div>
         );
     }
 
-    // 오류 발생 시
-    if (isError) {
+    if (isError && !renderedContent) {
         return (
-            <div className={`bg-white rounded-lg shadow-md p-6 ${className}`}>
-                <h3 className="text-lg font-semibold mb-4">결과</h3>
-                <div className="text-red-500 p-4">
-                    결과를 불러오는 중 오류가 발생했습니다.
-                </div>
+            <div
+                className={`${className} p-4 bg-white rounded-lg shadow-md text-center text-red-500`}
+            >
+                결과를 가져오는 중 오류가 발생했습니다.
             </div>
         );
     }
 
-    // 결과가 없는 경우
-    if (!message) {
+    if (!renderedContent) {
         return (
-            <div className={`bg-white rounded-lg shadow-md p-6 ${className}`}>
-                <h3 className="text-lg font-semibold mb-4">결과</h3>
-                <div className="text-gray-500 p-4">
-                    {data?.status === "processing"
-                        ? "태스크가 처리 중입니다. 잠시 기다려 주세요..."
-                        : "아직 결과가 없습니다."}
-                </div>
+            <div
+                className={`${className} p-4 bg-white rounded-lg shadow-md text-center text-gray-500`}
+            >
+                아직 결과가 없습니다.
             </div>
         );
     }
 
-    // 결과 표시 (HTML 직접 렌더링)
     return (
-        <div className={`bg-white rounded-lg shadow-md p-6 ${className}`}>
-            <h3 className="text-lg font-semibold mb-4">결과</h3>
-            <div className="prose prose-sm sm:prose lg:prose-lg max-w-none">
-                <div dangerouslySetInnerHTML={{ __html: renderedContent }} />
+        <div className={`${className} bg-white rounded-lg shadow-md`}>
+            <div
+                className="px-4 py-3 border-b flex items-center justify-between cursor-pointer hover:bg-gray-50"
+                onClick={toggleExpansion}
+            >
+                <h3 className="text-lg font-medium">에이전트 최종 응답</h3>
+                <svg
+                    className={`w-5 h-5 transition-transform ${
+                        isExpanded ? "transform rotate-180" : ""
+                    }`}
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                >
+                    <path
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        strokeWidth="2"
+                        d="M19 9l-7 7-7-7"
+                    />
+                </svg>
             </div>
+            {isExpanded && (
+                <div className="p-4">
+                    {renderedContent.includes("<table") ? (
+                        <div
+                            dangerouslySetInnerHTML={{
+                                __html: renderedContent,
+                            }}
+                        />
+                    ) : (
+                        <div className="prose max-w-none">
+                            <ReactMarkdown>{content}</ReactMarkdown>
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 };

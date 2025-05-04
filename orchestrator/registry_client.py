@@ -113,6 +113,106 @@ class RegistryClient:
         
         return "\n\n".join(result)
     
+    async def generate_detailed_role_descriptions(self) -> str:
+        """
+        모든 에이전트 역할에 대한 상세 설명 생성
+        LLM 프롬프트에 사용할 확장된 역할 정보
+        
+        Returns:
+            상세 역할 정보 문자열
+        """
+        agents = await self.get_all_agents()
+        
+        # 역할별로 그룹화
+        roles = {}
+        for agent in agents:
+            if agent.role not in roles:
+                roles[agent.role] = {
+                    "description": agent.description,
+                    "params": [param.dict() for param in agent.params],
+                    "count": 1  # 해당 역할을 가진 에이전트 수
+                }
+            else:
+                roles[agent.role]["count"] += 1
+        
+        # 포맷팅된 문자열 생성 (더 상세한 정보 포함)
+        result = []
+        result.append(f"총 {len(roles)} 종류의 역할, {len(agents)}개의 에이전트가 사용 가능합니다.\n")
+        
+        for role, info in roles.items():
+            # 파라미터 정보 포맷팅
+            params_detail = []
+            for param in info["params"]:
+                param_type = param.get("type", "string")
+                required = "필수" if param.get("required", False) else "선택사항"
+                description = param.get("description", "설명 없음")
+                
+                params_detail.append(
+                    f"    - **{param['name']}** ({param_type}, {required}): {description}"
+                )
+            
+            params_str = "\n".join(params_detail) if params_detail else "    - 파라미터 없음"
+            
+            # 역할 상세 정보 추가
+            result.append(
+                f"## {role} ({info['count']}개 인스턴스)\n"
+                f"**설명**: {info['description']}\n\n"
+                f"**입력 파라미터**:\n{params_str}\n\n"
+                f"**적합한 사용 사례**: {self._generate_use_cases(role, info['description'])}"
+            )
+        
+        return "\n\n".join(result)
+    
+    def _generate_use_cases(self, role: str, description: str) -> str:
+        """
+        역할과 설명을 기반으로 적합한 사용 사례 생성
+        
+        Args:
+            role: 에이전트 역할
+            description: 에이전트 설명
+            
+        Returns:
+            적합한 사용 사례 문자열
+        """
+        # 역할별 사용 사례 매핑
+        role_case_mapping = {
+            "writer": "문서 작성, 리포트 생성, 콘텐츠 요약, 텍스트 편집",
+            "web_search": "정보 검색, 최신 뉴스 조회, 사실 확인, 데이터 수집",
+            "code_generator": "코드 생성, 함수 구현, 버그 수정, 코드 리팩토링",
+            "stock_data_agent": "주식 데이터 조회, 시장 정보 수집, 금융 데이터 검색",
+            "stock_analysis_agent": "주식 데이터 분석, 기술적 지표 계산, 금융 인사이트 제공",
+            "data_analysis_agent": "데이터 분석, 통계 계산, 차트 생성, 데이터 인사이트 도출",
+            "react_agent": "사용자 인터페이스 개발, UI 컴포넌트 생성, 프론트엔드 구현"
+        }
+        
+        # 기본 사용 사례
+        if role in role_case_mapping:
+            return role_case_mapping[role]
+        
+        # 역할명에 특정 키워드가 포함된 경우
+        if "search" in role.lower():
+            return "정보 검색, 데이터 수집, 질의응답"
+        elif "write" in role.lower() or "text" in role.lower():
+            return "텍스트 생성, 콘텐츠 작성, 요약, 편집"
+        elif "code" in role.lower() or "develop" in role.lower():
+            return "코드 생성, 프로그래밍 지원, 개발 지원"
+        elif "data" in role.lower() or "analysis" in role.lower():
+            return "데이터 처리, 분석, 시각화, 인사이트 도출"
+        
+        # 설명에서 키워드 추출
+        desc_lower = description.lower()
+        if "검색" in desc_lower or "서치" in desc_lower:
+            return "정보 검색, 데이터 수집, 질의응답"
+        elif "작성" in desc_lower or "텍스트" in desc_lower:
+            return "텍스트 생성, 콘텐츠 작성, 요약, 편집"
+        elif "코드" in desc_lower or "개발" in desc_lower:
+            return "코드 생성, 프로그래밍 지원, 개발 지원"
+        elif "데이터" in desc_lower or "분석" in desc_lower:
+            return "데이터 처리, 분석, 시각화, 인사이트 도출"
+        
+        # 기본 사용 사례
+        return "일반적인 작업 수행, 정보 처리, 사용자 요청 처리"
+    
     async def check_health(self) -> Dict[str, Any]:
         """
         레지스트리 서비스 상태 확인

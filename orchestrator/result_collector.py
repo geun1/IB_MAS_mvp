@@ -492,9 +492,68 @@ class ResultCollector:
                     context["depends_results"] = depends_results
                     task_has_context = True
                     logger.info(f"[{task_uid}] 의존성 처리 완료: {len(depends_results)}개 성공")
+                    
+                    # 직접 태스크에 의존성 결과 추가 (브로커 컨텍스트 외에도 직접 전달)
+                    task["depends_results"] = depends_results
+                    logger.info(f"[{task_uid}] 태스크에 직접 의존성 결과를 추가했습니다.")
+                    
+                    # 일반화된 의존성 데이터 추출 및 처리
+                    processed_data = self.extract_data_from_dependencies(depends_results)
+                    if processed_data:
+                        # 추출된 데이터 로깅
+                        for source_role, data_dict in processed_data.items():
+                            for data_key, data_value in data_dict.items():
+                                # 데이터 유형 및 크기 정보 로깅
+                                data_info = None
+                                if isinstance(data_value, dict):
+                                    data_info = f"딕셔너리 ({len(data_value)} 항목)"
+                                elif isinstance(data_value, list):
+                                    data_info = f"리스트 ({len(data_value)} 항목)"
+                                elif isinstance(data_value, str):
+                                    data_info = f"문자열 ({len(data_value)} 문자)"
+                                else:
+                                    data_info = f"{type(data_value).__name__}"
+                                    
+                                logger.info(f"[{task_uid}] 의존성 데이터 추출: 출처={source_role}, 키={data_key}, 유형={data_info}")
+                        
+                        # params에 데이터 통합 적용 (기존 데이터 유지하면서 새 데이터 추가)
+                        for source_role, data_dict in processed_data.items():
+                            # 현재 실행 중인 태스크의 params 업데이트
+                            task_params = task.get("params", {})
+                            
+                            # 의존성 출처 정보 추가 (디버깅 및 추적용)
+                            if "source_tasks" not in task_params:
+                                task_params["source_tasks"] = {}
+                            
+                            # 소스 에이전트별 데이터 처리
+                            for data_key, data_value in data_dict.items():
+                                # params에 직접 추가 (기존 키와 충돌하지 않는 경우)
+                                if data_key not in task_params:
+                                    task_params[data_key] = data_value
+                                    logger.info(f"[{task_uid}] params에 새 키 추가: {data_key}")
+                                else:
+                                    # 이미 존재하는 키에 대한 처리
+                                    if not task_params[data_key]:  # 빈 값 또는 None인 경우
+                                        task_params[data_key] = data_value
+                                        logger.info(f"[{task_uid}] params의 빈 값 업데이트: {data_key}")
+                                    else:
+                                        # 중복 키에 대해 소스 정보가 있는 중첩된 구조로 저장
+                                        task_params["source_tasks"][source_role] = task_params.get("source_tasks", {}).get(source_role, {})
+                                        task_params["source_tasks"][source_role][data_key] = data_value
+                                        logger.info(f"[{task_uid}] source_tasks에 중복 키 저장: {source_role}.{data_key}")
+                            
+                            # 업데이트된 params 저장
+                            task["params"] = task_params
+                            
+                        logger.info(f"[{task_uid}] 의존성 데이터가 params에 통합되었습니다.")
             
             # 컨텍스트 구성 여부 로깅
             logger.info(f"[{task_uid}] 컨텍스트 구성 완료: {task_has_context}")
+            
+            # 최종 params 구조 로깅
+            final_params = task.get("params", {})
+            params_keys = list(final_params.keys())
+            logger.info(f"[{task_uid}] 최종 params 키: {params_keys}")
             
             # 브로커에 태스크 생성
             logger.info(f"[{task_uid}] 브로커에 태스크 생성 요청: 역할={role}, 대화ID={conversation_id}")
@@ -517,7 +576,16 @@ class ResultCollector:
             create_params_copy = create_params.copy()
             if 'agent_configs' in create_params_copy:
                 create_params_copy.pop('agent_configs')
-            task_id = await self.broker_client.create_task(role, params, **create_params_copy)
+                
+            # 직접 태스크에 의존성 결과가 있는 경우 전달
+            if "depends_results" in task and task["depends_results"]:
+                if not create_params_copy.get("context"):
+                    create_params_copy["context"] = {}
+                if not create_params_copy["context"].get("depends_results"):
+                    create_params_copy["context"]["depends_results"] = task["depends_results"]
+                logger.info(f"[{task_uid}] 의존성 결과를 create_params의 context에 추가했습니다. 개수: {len(task['depends_results'])}")
+                
+            task_id = await self.broker_client.create_task(role, final_params, **create_params_copy)
             broker_task_id = task_id
             
             # 태스크 생성 성공
@@ -575,6 +643,81 @@ class ResultCollector:
                 self.results[broker_task_id] = error_result
             
             return error_result
+
+    def extract_data_from_dependencies(self, depends_results: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        """
+        의존성 결과에서 다양한 데이터를 일반화된 방식으로 추출
+        
+        Args:
+            depends_results: 의존성 태스크 결과 목록
+            
+        Returns:
+            추출된 데이터를 에이전트 역할별로 매핑한 딕셔너리
+        """
+        extracted_data = {}  # {role: {data_key: data_value}}
+        
+        for dep_result in depends_results:
+            if not isinstance(dep_result, dict):
+                continue
+                
+            # 기본 메타데이터 추출
+            dep_role = dep_result.get("role", "unknown")
+            dep_task_id = dep_result.get("task_id", "unknown")
+            
+            # 결과 데이터가 없는 경우 건너뛰기
+            if "result" not in dep_result or not isinstance(dep_result["result"], dict):
+                continue
+                
+            # 역할별 결과 저장소 초기화
+            if dep_role not in extracted_data:
+                extracted_data[dep_role] = {}
+                
+            result_data = dep_result["result"]
+            
+            # 1. status 확인 (유효한 결과인지)
+            result_status = result_data.get("status")
+            if result_status == "error":
+                # 오류 결과인 경우 추가 처리 건너뛰기
+                continue
+                
+            # 2. 표준 데이터 필드 검색 (다양한 필드 패턴 처리)
+            # 2.1 최상위 데이터 필드
+            for field_name in ["data", "raw_data", "content", "result"]:
+                if field_name in result_data and result_data[field_name]:
+                    extracted_data[dep_role][field_name] = result_data[field_name]
+                    
+            # 2.2 중첩된 result 구조 확인
+            if "result" in result_data and isinstance(result_data["result"], dict):
+                nested_result = result_data["result"]
+                
+                # 중첩된 데이터 필드 검색
+                for field_name in ["data", "raw_data", "content", "analysis"]:
+                    if field_name in nested_result and nested_result[field_name]:
+                        # "[name]_nested"로 키 저장하여 최상위 필드와 구분
+                        extracted_data[dep_role][f"{field_name}_nested"] = nested_result[field_name]
+                
+                # 다른 의미있는 필드 확인
+                for key, value in nested_result.items():
+                    if key not in ["data", "raw_data", "content", "analysis"] and value and isinstance(value, (dict, list, str)):
+                        extracted_data[dep_role][f"result_{key}"] = value
+                        
+            # 3. 특수한 데이터 구조 처리 (다양한 에이전트 출력 패턴)
+            # 3.1 코드 파일 처리 (code_generator)
+            if "code_files" in result_data:
+                extracted_data[dep_role]["code_files"] = result_data["code_files"]
+                
+            # 3.2 분석 결과 처리 (analysis_agent)
+            if "analysis_results" in result_data:
+                extracted_data[dep_role]["analysis_results"] = result_data["analysis_results"]
+                
+            # 3.3 검색 결과 처리 (search_agent)
+            if "search_results" in result_data:
+                extracted_data[dep_role]["search_results"] = result_data["search_results"]
+                
+            # 태스크 ID 정보 추가 (출처 추적용)
+            extracted_data[dep_role]["source_task_id"] = dep_task_id
+                
+        return extracted_data
 
     async def process_tasks(self, tasks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """

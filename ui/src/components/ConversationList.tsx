@@ -225,32 +225,100 @@ const ConversationList: React.FC = () => {
                                                                     <div className="font-medium mb-1">
                                                                         결과:
                                                                     </div>
-                                                                    <div className="whitespace-pre-wrap bg-gray-50 p-3 rounded text-sm">
-                                                                        {typeof task.result ===
-                                                                            "object" &&
-                                                                        task
-                                                                            .result
-                                                                            .content
-                                                                            ? task
-                                                                                  .result
-                                                                                  .content
-                                                                            : typeof task.result ===
-                                                                                  "object" &&
-                                                                              task
-                                                                                  .result
-                                                                                  .message
-                                                                            ? task
-                                                                                  .result
-                                                                                  .message
-                                                                            : typeof task.result ===
-                                                                              "string"
-                                                                            ? task.result
-                                                                            : JSON.stringify(
-                                                                                  task.result,
-                                                                                  null,
-                                                                                  2
-                                                                              )}
-                                                                    </div>
+                                                                    {typeof task.result ===
+                                                                        "object" &&
+                                                                    task.result
+                                                                        .data ? (
+                                                                        // stock_data_agent 타입의 결과 처리 (data 객체)
+                                                                        <pre className="whitespace-pre-wrap bg-gray-50 p-3 rounded text-sm overflow-x-auto">
+                                                                            {JSON.stringify(
+                                                                                task
+                                                                                    .result
+                                                                                    .data,
+                                                                                null,
+                                                                                2
+                                                                            )}
+                                                                        </pre>
+                                                                    ) : typeof task.result ===
+                                                                          "object" &&
+                                                                      task
+                                                                          .result
+                                                                          .result &&
+                                                                      task
+                                                                          .result
+                                                                          .result
+                                                                          .content ? (
+                                                                        // 중첩 구조: result.result.content
+                                                                        <div className="whitespace-pre-wrap bg-gray-50 p-3 rounded text-sm">
+                                                                            {
+                                                                                task
+                                                                                    .result
+                                                                                    .result
+                                                                                    .content
+                                                                            }
+                                                                        </div>
+                                                                    ) : typeof task.result ===
+                                                                          "object" &&
+                                                                      task
+                                                                          .result
+                                                                          .result &&
+                                                                      task
+                                                                          .result
+                                                                          .result
+                                                                          .message ? (
+                                                                        // 중첩 구조: result.result.message
+                                                                        <div className="whitespace-pre-wrap bg-gray-50 p-3 rounded text-sm">
+                                                                            {
+                                                                                task
+                                                                                    .result
+                                                                                    .result
+                                                                                    .message
+                                                                            }
+                                                                        </div>
+                                                                    ) : typeof task.result ===
+                                                                          "object" &&
+                                                                      task
+                                                                          .result
+                                                                          .content ? (
+                                                                        // 중첩 구조: result.content
+                                                                        <div className="whitespace-pre-wrap bg-gray-50 p-3 rounded text-sm">
+                                                                            {
+                                                                                task
+                                                                                    .result
+                                                                                    .content
+                                                                            }
+                                                                        </div>
+                                                                    ) : typeof task.result ===
+                                                                          "object" &&
+                                                                      task
+                                                                          .result
+                                                                          .message ? (
+                                                                        // 중첩 구조: result.message
+                                                                        <div className="whitespace-pre-wrap bg-gray-50 p-3 rounded text-sm">
+                                                                            {
+                                                                                task
+                                                                                    .result
+                                                                                    .message
+                                                                            }
+                                                                        </div>
+                                                                    ) : typeof task.result ===
+                                                                      "string" ? (
+                                                                        // 문자열 결과
+                                                                        <div className="whitespace-pre-wrap bg-gray-50 p-3 rounded text-sm">
+                                                                            {
+                                                                                task.result
+                                                                            }
+                                                                        </div>
+                                                                    ) : (
+                                                                        // 기타 객체 형태의 결과는 JSON으로 표시
+                                                                        <pre className="whitespace-pre-wrap bg-gray-50 p-3 rounded text-sm overflow-x-auto">
+                                                                            {JSON.stringify(
+                                                                                task.result,
+                                                                                null,
+                                                                                2
+                                                                            )}
+                                                                        </pre>
+                                                                    )}
                                                                 </div>
                                                             )}
                                                         </div>

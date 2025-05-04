@@ -65,6 +65,39 @@ services:
             - agent-network
             - multiagent-network
 
+    stock_data_agent:
+        build:
+            context: ../
+            dockerfile: ./agents/stock_data_agent/Dockerfile
+        container_name: stock_data_agent
+        ports:
+            - "8014:8000"
+        environment:
+            - REGISTRY_URL=http://registry:8000
+            - RABBITMQ_HOST=rabbitmq
+            - RABBITMQ_PORT=5672
+            - CONTAINER_NAME=stock_data_agent
+            - PORT=8000
+            - OPENAI_API_KEY=${OPENAI_API_KEY:-***REMOVED***proj-Z9xpJQlE6j2LJqUNxWwFk1BrJwgaf6ai1Pase_qZdjBcNwUUqkW-z-iWlymnqON_WlLpXZL8J2T3BlbkFJFdDQE_PlQwnd9h8TQ7NpaZGBAB-ukoN88VWCh0aaS7KYdvKoRtXAJvviTF9inX_sEilr1c5rMA}
+            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-***REMOVED***ant-test-key}
+            - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY:-XVOHLPWZNWVPORLZ}
+            - LOG_LEVEL=DEBUG
+            - PYTHONPATH=/app
+        volumes:
+            - ../common:/app/common
+            - ./stock_data_agent:/app/agent
+            - ./start_agents.sh:/app/agent/start.sh
+        command:
+            [
+                "bash",
+                "-c",
+                "chmod +x /app/agent/start.sh && /app/agent/start.sh",
+            ]
+        restart: always
+        networks:
+            - agent-network
+            - multiagent-network
+
     code_generator_agent:
         build:
             context: ../
@@ -176,6 +209,38 @@ services:
             - agent-network
             - multiagent-network
         restart: always
+
+    stock_analysis_agent:
+        build:
+            context: ../
+            dockerfile: ./agents/stock_analysis_agent/Dockerfile
+        container_name: stock_analysis_agent
+        ports:
+            - "8015:8000"
+        environment:
+            - REGISTRY_URL=http://registry:8000
+            - RABBITMQ_HOST=rabbitmq
+            - RABBITMQ_PORT=5672
+            - CONTAINER_NAME=stock_analysis_agent
+            - PORT=8000
+            - OPENAI_API_KEY=${OPENAI_API_KEY:-***REMOVED***proj-Z9xpJQlE6j2LJqUNxWwFk1BrJwgaf6ai1Pase_qZdjBcNwUUqkW-z-iWlymnqON_WlLpXZL8J2T3BlbkFJFdDQE_PlQwnd9h8TQ7NpaZGBAB-ukoN88VWCh0aaS7KYdvKoRtXAJvviTF9inX_sEilr1c5rMA}
+            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-***REMOVED***ant-test-key}
+            - LOG_LEVEL=DEBUG
+            - PYTHONPATH=/app
+        volumes:
+            - ../common:/app/common
+            - ./stock_analysis_agent:/app/agent
+            - ./start_agents.sh:/app/agent/start.sh
+        command:
+            [
+                "bash",
+                "-c",
+                "chmod +x /app/agent/start.sh && /app/agent/start.sh",
+            ]
+        restart: always
+        networks:
+            - agent-network
+            - multiagent-network
 
 networks:
     agent-network:

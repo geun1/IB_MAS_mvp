@@ -24,9 +24,8 @@ const ProcessMessage: React.FC<ProcessMessageProps> = ({
     taskIndex,
     taskDescription,
 }) => {
-    const [expanded, setExpanded] = useState(
-        type === "task_split" || type === "agent_result"
-    );
+    // 기본적으로 모든 메시지 타입이 접힌 상태로 시작하도록 수정
+    const [expanded, setExpanded] = useState(false);
 
     // 메시지 타입에 따라 스타일 결정
     const getBgColor = () => {
@@ -122,7 +121,7 @@ const ProcessMessage: React.FC<ProcessMessageProps> = ({
 
     return (
         <div
-            className={`rounded-lg p-3 mr-auto w-full ${getBgColor()} ${className}`}
+            className={`rounded-lg p-3 mr-auto w-full ${getBgColor()} ${className} mb-2`}
         >
             <div className="flex justify-between items-start">
                 <div className="flex items-center space-x-2">
@@ -132,45 +131,44 @@ const ProcessMessage: React.FC<ProcessMessageProps> = ({
                         {timestamp.toLocaleTimeString()}
                     </span>
                 </div>
-                {type !== "task_split" && (
-                    <button
-                        onClick={() => setExpanded(!expanded)}
-                        className="text-gray-500 hover:text-gray-700"
-                    >
-                        {expanded ? (
-                            <svg
-                                xmlns="http://www.w3.org/2000/svg"
-                                className="h-5 w-5"
-                                viewBox="0 0 20 20"
-                                fill="currentColor"
-                            >
-                                <path
-                                    fillRule="evenodd"
-                                    d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z"
-                                    clipRule="evenodd"
-                                />
-                            </svg>
-                        ) : (
-                            <svg
-                                xmlns="http://www.w3.org/2000/svg"
-                                className="h-5 w-5"
-                                viewBox="0 0 20 20"
-                                fill="currentColor"
-                            >
-                                <path
-                                    fillRule="evenodd"
-                                    d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
-                                    clipRule="evenodd"
-                                />
-                            </svg>
-                        )}
-                    </button>
-                )}
+                {/* 모든 메시지 타입에 드롭다운 버튼 추가 */}
+                <button
+                    onClick={() => setExpanded(!expanded)}
+                    className="text-gray-500 hover:text-gray-700"
+                >
+                    {expanded ? (
+                        <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            className="h-5 w-5"
+                            viewBox="0 0 20 20"
+                            fill="currentColor"
+                        >
+                            <path
+                                fillRule="evenodd"
+                                d="M14.707 12.707a1 1 0 01-1.414 0L10 9.414l-3.293 3.293a1 1 0 01-1.414-1.414l4-4a1 1 0 011.414 0l4 4a1 1 0 010 1.414z"
+                                clipRule="evenodd"
+                            />
+                        </svg>
+                    ) : (
+                        <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            className="h-5 w-5"
+                            viewBox="0 0 20 20"
+                            fill="currentColor"
+                        >
+                            <path
+                                fillRule="evenodd"
+                                d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z"
+                                clipRule="evenodd"
+                            />
+                        </svg>
+                    )}
+                </button>
             </div>
 
             {renderTaskInfo()}
 
-            {(type === "task_split" || expanded) && (
+            {expanded && (
                 <div className="mt-2 max-w-full overflow-x-auto prose prose-sm">
                     <ReactMarkdown>{content}</ReactMarkdown>
                 </div>

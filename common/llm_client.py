@@ -199,6 +199,35 @@ class LLMClient:
         response = await self.acomplete(messages=messages, **kwargs)
         return response["choices"][0]["message"]["content"]
     
+    async def chat_completion(
+        self, 
+        prompt: str, 
+        system_prompt: Optional[str] = None,
+        model: Optional[str] = None,
+        temperature: float = 0.7
+    ) -> str:
+        """
+        단일 프롬프트에 대한 채팅 완성 응답을 생성합니다.
+        
+        Args:
+            prompt: 사용자 질문/프롬프트
+            system_prompt: 시스템 프롬프트 (선택 사항)
+            model: 사용할 모델 (None이면 기본 모델 사용)
+            temperature: 생성 온도 (0.0-1.0)
+            
+        Returns:
+            생성된 응답 텍스트
+        """
+        messages = []
+        
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+        
+        messages.append({"role": "user", "content": prompt})
+        
+        # aask 메서드 사용 (내부적으로 acomplete 호출)
+        return await self.aask(prompt, system_prompt, model=model, temperature=temperature)
+    
     def _validate_messages(self, messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
         """메시지 형식 검증 및 변환"""
         validated = []
