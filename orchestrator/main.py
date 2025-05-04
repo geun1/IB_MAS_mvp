@@ -85,6 +85,10 @@ async def process_query(request: QueryRequest):
         
         logger.info(f"새 쿼리 접수: '{request.query}' (대화: {conversation_id}, 사용자: {user_id})")
         
+        # 비활성화된 에이전트 목록 로깅
+        if request.disabled_agents:
+            logger.info(f"비활성화된 에이전트: {', '.join(request.disabled_agents)}")
+        
         # 대화 상태 초기화
         conversation = ConversationState()
         conversation.user_id = user_id
@@ -99,7 +103,8 @@ async def process_query(request: QueryRequest):
         tasks, execution_levels, natural_language_tasks = await task_decomposer.decompose_query(
             query=request.query,
             conversation_id=conversation_id,
-            user_id=user_id
+            user_id=user_id,
+            disabled_agents=request.disabled_agents
         )
         
         # 태스크 저장
@@ -125,37 +130,58 @@ async def process_query(request: QueryRequest):
                 task = tasks[task_idx]  # 태스크 인덱스로 실제 태스크 객체 가져오기
                 role = task.get("role")
                 description = task.get("description")
+                
+                # 비활성화된 에이전트에 대한 태스크인 경우 건너뛰기
+                if request.disabled_agents and role in request.disabled_agents:
+                    logger.warning(f"비활성화된 에이전트 '{role}'에 대한 태스크를 건너뜁니다: '{description}'")
+                    # skipped 상태로 결과 추가하고 다음 태스크로 넘어감
+                    level_results.append({
+                        "task_id": f"task_skipped_{task_idx}",
+                        "role": role,
+                        "status": "skipped",
+                        "error": f"해당 에이전트는 비활성화 상태입니다.",
+                        "description": description,
+                        "created_at": time.time(),
+                        "updated_at": time.time()
+                    })
+                    continue # 다음 task_idx로 이동
+                
+                # 여기부터는 활성화된 에이전트의 태스크만 처리
                 logger.info(f"태스크 실행: '{description}' (역할: {role})")
                 
                 # 태스크에 대화 ID 추가
                 task["conversation_id"] = conversation_id
                 
-                # 의존성 태스크 결과 추가
+                # 의존성 태스크 결과 추가 (이전 레벨 결과 주입)
                 if level > 1:
-                    # 이전 레벨의 결과를 현재 태스크에 전달
-                    prev_results = result_collector.get_all_results()
-                    logger.info(f"이전 레벨 태스크 결과 {len(prev_results)}개를 현재 태스크에 전달")
-                    logger.debug(f"이전 결과 상세: {prev_results}")
+                    # 이전 레벨의 완료된 결과만 필터링 (skipped 제외)
+                    prev_results = [res for res in result_collector.get_all_results() if res.get("status") == "completed"]
                     
-                    # 태스크에 의존성 정보 추가
-                    for task_idx in level_task_indices:
-                        # 태스크 인덱스로 실제 태스크 객체에 접근
-                        task = tasks[task_idx]
-                        # 의존성 설정
-                        task["depends_on"] = []
+                    if prev_results:
+                        logger.info(f"이전 레벨의 완료된 태스크 결과 {len(prev_results)}개를 현재 태스크에 전달")
+                        logger.debug(f"이전 결과 상세: {prev_results}")
                         
-                        # 이전 결과의 task_id 추출
-                        for prev_result in prev_results:
-                            task_id = prev_result.get("task_id")
-                            if task_id and isinstance(task_id, str) and task_id.startswith("task_"):
-                                logger.info(f"의존성 추가: {task_id} ({prev_result.get('role', 'unknown')})")
-                                task["depends_on"].append(task_id)
+                        # 태스크에 의존성 정보 추가
+                        # 현재 태스크가 의존하는 이전 태스크의 ID 목록 생성 (구현 필요시)
+                        # task["depends_on"] = [prev_res["task_id"] for prev_res in prev_results if ... ]
+                        
+                        # 결과를 params에 병합 (예시: context 필드)
+                        if "params" not in task:
+                            task["params"] = {}
+                        task["params"]["previous_results"] = prev_results # 이전 결과를 params에 추가
+
                 
-                # UI에서 전달된 에이전트 설정이 있는지 확인
-                agent_configs = app.state.registry_client.get_agent_configs(role)
-                if agent_configs:
-                    task["agent_configs"] = agent_configs
-                    logger.info(f"에이전트 설정 포함: {agent_configs}")
+                # UI에서 전달된 에이전트 설정이 있는지 확인 및 적용
+                # request.agent_configs는 전체 설정일 수 있으므로, 현재 태스크 역할에 맞는 설정만 필터링 필요
+                agent_specific_config = None
+                if request.agent_configs and role in request.agent_configs:
+                    agent_specific_config = request.agent_configs[role]
+                    if agent_specific_config:
+                        # 태스크 파라미터에 에이전트 설정 병합 (기존 값 덮어쓰기 가능)
+                        if "params" not in task:
+                             task["params"] = {}
+                        task["params"].update(agent_specific_config) 
+                        logger.info(f"에이전트 '{role}' 설정 포함: {agent_specific_config}")
                 
                 # 태스크 실행 및 결과 수집
                 result = await result_collector.process_task(task)

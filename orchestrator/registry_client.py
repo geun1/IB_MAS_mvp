@@ -81,11 +81,14 @@ class RegistryClient:
             logger.error(f"역할별 에이전트 조회 중 오류: {str(e)}")
             return []
     
-    async def generate_role_descriptions(self) -> str:
+    async def generate_role_descriptions(self, disabled_agents: Optional[List[str]] = None) -> str:
         """
         모든 에이전트 역할에 대한 설명 생성
         LLM 프롬프트에 사용할 역할 정보
         
+        Args:
+            disabled_agents: 비활성화된 에이전트 역할 목록
+            
         Returns:
             역할 정보 문자열
         """
@@ -94,6 +97,10 @@ class RegistryClient:
         # 역할별로 그룹화
         roles = {}
         for agent in agents:
+            # 비활성화된 에이전트 제외
+            if disabled_agents and agent.role in disabled_agents:
+                continue
+                
             if agent.role not in roles:
                 roles[agent.role] = {
                     "description": agent.description,
@@ -113,10 +120,13 @@ class RegistryClient:
         
         return "\n\n".join(result)
     
-    async def generate_detailed_role_descriptions(self) -> str:
+    async def generate_detailed_role_descriptions(self, disabled_agents: Optional[List[str]] = None) -> str:
         """
         모든 에이전트 역할에 대한 상세 설명 생성
         LLM 프롬프트에 사용할 확장된 역할 정보
+        
+        Args:
+            disabled_agents: 비활성화된 에이전트 역할 목록
         
         Returns:
             상세 역할 정보 문자열
@@ -125,7 +135,15 @@ class RegistryClient:
         
         # 역할별로 그룹화
         roles = {}
+        total_active_agents = 0
+        
         for agent in agents:
+            # 비활성화된 에이전트 제외
+            if disabled_agents and agent.role in disabled_agents:
+                continue
+                
+            total_active_agents += 1
+            
             if agent.role not in roles:
                 roles[agent.role] = {
                     "description": agent.description,
@@ -137,7 +155,12 @@ class RegistryClient:
         
         # 포맷팅된 문자열 생성 (더 상세한 정보 포함)
         result = []
-        result.append(f"총 {len(roles)} 종류의 역할, {len(agents)}개의 에이전트가 사용 가능합니다.\n")
+        result.append(f"총 {len(roles)} 종류의 역할, {total_active_agents}개의 활성화된 에이전트가 사용 가능합니다.\n")
+        
+        # 활성화된 에이전트가 없는 경우
+        if not roles:
+            result.append("현재 사용 가능한 활성화된 에이전트가 없습니다. 모든 에이전트가 비활성화되었습니다.")
+            return "\n".join(result)
         
         for role, info in roles.items():
             # 파라미터 정보 포맷팅

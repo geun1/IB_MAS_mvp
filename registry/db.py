@@ -61,6 +61,9 @@ class RedisClient:
                 # 4. TTL 설정
                 pipeline.set(f"ttl:{agent.id}", int(time.time()), ex=DEFAULT_TTL)
                 
+                # 5. 활성화 상태 설정 (기본값: 활성화)
+                pipeline.sadd("enabled_agents", agent.id)
+                
                 # 파이프라인 실행
                 pipeline.execute()
                 
@@ -122,13 +125,16 @@ class RedisClient:
                     param_list = json.loads(param_data)
                     agent_dict["params"] = [AgentParam(**param) for param in param_list]
                 
+                # 활성화 상태 조회
+                agent_dict["is_enabled"] = self.redis.sismember("enabled_agents", agent_id)
+                
                 return Agent(**agent_dict)
             return None
         except Exception as e:
             logging.error(f"에이전트 조회 오류: {str(e)}")
             return None
     
-    async def list_agents(self, role: Optional[str] = None, status: Optional[AgentStatus] = None) -> List[Agent]:
+    async def list_agents(self, role: Optional[str] = None, status: Optional[AgentStatus] = None, enabled_only: bool = False) -> List[Agent]:
         """에이전트 목록 조회"""
         agents = []
         try:
@@ -138,6 +144,8 @@ class RedisClient:
                     if role and agent_dict["role"] != role:
                         continue
                     if status and agent_dict.get("status") != status:
+                        continue
+                    if enabled_only and not agent_dict.get("is_enabled", True):
                         continue
                     agents.append(Agent(**agent_dict))
                 return agents
@@ -164,6 +172,15 @@ class RedisClient:
                             
                             # 상태 필터링
                             if status and agent_dict.get("status") != status:
+                                continue
+                            
+                            # 활성화 상태 확인 및 필터링
+                            is_enabled = self.redis.sismember("enabled_agents", agent_id)
+                            agent_dict["is_enabled"] = is_enabled
+                            
+                            # 활성화된 에이전트만 필터링
+                            if enabled_only and not is_enabled:
+                                logging.info(f"비활성화된 에이전트 필터링: {agent_id}")
                                 continue
                                 
                             agents.append(Agent(**agent_dict))
@@ -200,6 +217,7 @@ class RedisClient:
             pipeline.srem(f"role:{role}", agent_id)  # 역할별 인덱스에서 삭제
             pipeline.srem("agent_ids", agent_id)  # ID 목록에서 삭제
             pipeline.delete(f"ttl:{agent_id}")  # TTL 키 삭제
+            pipeline.srem("enabled_agents", agent_id)  # 활성화 목록에서 삭제
             
             result = pipeline.execute()
             logging.info(f"등록 해제 결과: {result}")
@@ -207,6 +225,41 @@ class RedisClient:
         except Exception as e:
             logging.error(f"에이전트 제거 실패: {str(e)}")
             return False
+    
+    async def set_agent_enablement(self, agent_id: str, enabled: bool) -> bool:
+        """에이전트 활성화 상태 설정"""
+        try:
+            # 해시에서 에이전트 정보 조회
+            agent_data = self.redis.hget("agents", agent_id)
+            if not agent_data:
+                logging.warning(f"에이전트 정보 없음: {agent_id}")
+                return False  # 에이전트 없음
+            
+            # 에이전트 정보 업데이트
+            agent_dict = json.loads(agent_data)
+            agent_dict["is_enabled"] = enabled
+            
+            pipeline = self.redis.pipeline()
+            # 업데이트된 에이전트 정보 저장
+            pipeline.hset("agents", agent_id, json.dumps(agent_dict))
+            
+            # 활성화 상태 설정
+            if enabled:
+                pipeline.sadd("enabled_agents", agent_id)
+                logging.info(f"에이전트 활성화: {agent_id}")
+            else:
+                pipeline.srem("enabled_agents", agent_id)
+                logging.info(f"에이전트 비활성화: {agent_id}")
+            
+            pipeline.execute()
+            return True
+        except Exception as e:
+            logging.error(f"에이전트 활성화 상태 변경 실패: {str(e)}")
+            return False
+    
+    async def get_active_agents(self, role: Optional[str] = None) -> List[Agent]:
+        """활성화된 에이전트만 조회"""
+        return await self.list_agents(role=role, enabled_only=True)
     
     async def cleanup_inactive_agents(self, cutoff_time: float) -> int:
         """비활성 에이전트 정리"""
@@ -234,6 +287,7 @@ class RedisClient:
                         # 관련된 모든 키 삭제
                         pipeline.hdel("agents", agent_id)
                         pipeline.srem("agent_ids", agent_id)
+                        pipeline.srem("enabled_agents", agent_id)
                         if role:
                             pipeline.srem(f"role:{role}", agent_id)
                         pipeline.delete(ttl_key)

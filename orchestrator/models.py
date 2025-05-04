@@ -45,6 +45,7 @@ class QueryRequest(BaseModel):
     user_id: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
     agent_configs: Optional[Dict[str, Any]] = None
+    disabled_agents: Optional[List[str]] = None  # 비활성화된 에이전트 목록
 
 class QueryResponse(BaseModel):
     """쿼리 응답 모델"""

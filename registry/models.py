@@ -39,6 +39,7 @@ class Agent(BaseModel):
     last_heartbeat: Optional[float] = Field(default_factory=lambda: datetime.now().timestamp())
     capabilities: List[str] = []
     error_message: Optional[str] = None
+    is_enabled: bool = True  # 에이전트 활성화 상태, 기본값은 활성화
     
     @validator('role')
     def role_must_be_lowercase(cls, v):

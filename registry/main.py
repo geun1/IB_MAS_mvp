@@ -40,6 +40,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# 에이전트 활성화 요청 모델
+class AgentEnablementRequest(BaseModel):
+    """에이전트 활성화 요청 모델"""
+    enabled: bool
+
 # 비활성 에이전트 정리 백그라운드 태스크
 async def cleanup_task():
     while True:
@@ -181,11 +186,12 @@ async def unregister_agent_by_path(role: str, agent_id: str):
 @app.get("/agents")
 async def list_agents(
     role: Optional[str] = None,
-    status: Optional[AgentStatus] = None
+    status: Optional[AgentStatus] = None,
+    enabled_only: bool = Query(False, description="활성화된 에이전트만 조회할지 여부")
 ):
     """에이전트 목록 조회"""
     try:
-        agents = await redis_client.list_agents(role, status)
+        agents = await redis_client.list_agents(role, status, enabled_only)
         # 모든 에이전트 필드가 제대로 포함되었는지 확인
         for agent in agents:
             if not hasattr(agent, 'config_params'):
@@ -204,16 +210,63 @@ async def list_agents(
             "timestamp": time.time()
         }
 
+@app.get("/active-agents", response_model=AgentList, tags=["에이전트 조회"])
+async def list_active_agents(
+    role: Optional[str] = None
+):
+    """활성화된 에이전트만 조회"""
+    try:
+        agents = await redis_client.get_active_agents(role)
+        return {
+            "agents": agents,
+            "total": len(agents),
+            "timestamp": time.time()
+        }
+    except Exception as e:
+        logging.error(f"활성화된 에이전트 목록 조회 오류: {str(e)}")
+        return {
+            "agents": [],
+            "total": 0,
+            "timestamp": time.time()
+        }
+
+@app.patch("/agents/{agent_id}/enablement", response_model=ApiResponse, tags=["에이전트 관리"])
+async def set_agent_enablement(agent_id: str, request: AgentEnablementRequest):
+    """에이전트 활성화 상태 설정"""
+    try:
+        success = await redis_client.set_agent_enablement(agent_id, request.enabled)
+        
+        if not success:
+            raise HTTPException(status_code=404, detail=f"에이전트 {agent_id}를 찾을 수 없습니다.")
+        
+        status_text = "활성화" if request.enabled else "비활성화"
+        return {
+            "status": "success",
+            "message": f"에이전트 {agent_id}가 {status_text}되었습니다."
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_msg = f"에이전트 활성화 상태 변경 중 오류: {str(e)}"
+        logging.error(error_msg)
+        raise HTTPException(status_code=500, detail=error_msg)
+
 @app.get("/agents/by-role/{role}", response_model=List[Agent], tags=["에이전트 조회"])
 async def get_agents_by_role(
     role: str, 
     status: Optional[str] = Query(None), 
-    max_load: Optional[float] = Query(None)
+    max_load: Optional[float] = Query(None),
+    enabled_only: bool = Query(False, description="활성화된 에이전트만 조회할지 여부")
 ):
     """역할별 에이전트 목록 조회"""
     try:
         # 올바른 비동기 호출 방식으로 수정
         agents = await redis_client.get_agents_by_role(role, status, max_load)
+        
+        # 활성화된 에이전트만 필터링
+        if enabled_only:
+            agents = [agent for agent in agents if getattr(agent, 'is_enabled', True)]
+            
         return agents
     except Exception as e:
         logging.error(f"역할별 에이전트 조회 중 오류: {str(e)}")

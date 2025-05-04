@@ -63,69 +63,52 @@ class OrchestratorLLMClient:
             분해된 태스크 정보
         """
         try:
-            # 프롬프트 생성
+            # LLM 호출 준비
             prompt = create_task_decomposition_prompt(user_query, available_roles, agents_detail)
             
-            # LLM API 호출
-            logger.info(f"LLM API 호출: 태스크 분해 (쿼리: {user_query[:50]}...)")
+            logger.info(f"LLM 태스크 분해 프롬프트:\\n{prompt}") # 프롬프트 로깅 추가
+
+            # 공통 클라이언트의 ask 메서드 사용 (내부적으로 재시도 및 폴백 처리)
+            response_content = await self.client.ask(
+                prompt=prompt,
+                model=self.model,
+                fallback_models=self.fallback_models,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                response_format={"type": "json_object"} # JSON 모드 요청
+            )
             
-            # 모든 모델 순차적으로 시도
-            response = None
-            last_error = None
-            models_to_try = [self.model] + self.fallback_models
-            
-            for model in models_to_try:
-                try:
-                    logger.info(f"모델 시도 중: {model}")
-                    response = self.client.ask(prompt, model=model, temperature=self.temperature)
-                    logger.info(f"모델 {model} 성공!")
-                    break  # 성공하면 루프 종료
-                except Exception as e:
-                    logger.warning(f"모델 {model} 호출 실패: {str(e)}")
-                    last_error = e
-                    continue  # 다음 모델 시도
-            
-            if response is None:
-                raise last_error or Exception("모든 모델 시도 실패")
-            
-            # 응답 파싱
+            logger.info(f"LLM 태스크 분해 응답 원문:\\n{response_content}") # 응답 원문 로깅 추가
+
+            # JSON 파싱 시도
             try:
-                # JSON 형식 응답 추출
-                # 응답 내용에서 JSON 부분만 추출
-                json_str = self._extract_json(response)
-                result = json.loads(json_str)
-                logger.debug(f"분해 결과: {len(result.get('tasks', []))}개 태스크")
-                return result
-            except json.JSONDecodeError as e:
-                logger.error(f"JSON 파싱 오류: {str(e)}")
-                logger.debug(f"원본 응답: {response}")
-                # 기본 태스크 반환
-                return {
-                    "tasks": [
-                        {
-                            "role": "writer",
-                            "description": "사용자 요청 처리",
-                            "params": {"topic": user_query},
-                            "depends_on": []
-                        }
-                    ],
-                    "reasoning": "기본 태스크 생성 (LLM 응답 파싱 실패)"
-                }
+                # 응답 문자열에서 JSON 부분만 추출 시도 (마크다운 코드 블록 등 제거)
+                import re
+                json_match = re.search(r'```json\\s*([\\s\\S]*?)\\s*```', response_content)
+                if json_match:
+                    json_str = json_match.group(1).strip()
+                    logger.info("마크다운 코드 블록에서 JSON 추출 완료")
+                else:
+                    # JSON 객체가 직접 반환된 경우 처리
+                    json_str = response_content.strip()
+                    # 추가 검증: 문자열이 '{'로 시작하고 '}'로 끝나는지 확인
+                    if not (json_str.startswith('{') and json_str.endswith('}')):
+                         logger.warning("응답이 JSON 객체 형식이 아닐 수 있습니다. 파싱을 시도합니다.")
                 
+                decomposition = json.loads(json_str)
+                logger.info("LLM 응답 JSON 파싱 성공")
+                return decomposition
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON 파싱 오류: {e}")
+                logger.error(f"파싱 실패한 내용: {json_str}") # 파싱 실패 내용 로깅
+                # 실패 시 빈 딕셔너리 반환 또는 다른 오류 처리 로직
+                return {"tasks": [], "error": f"JSON 파싱 실패: {e}"}
+
         except Exception as e:
-            logger.error(f"태스크 분해 중 오류 발생: {str(e)}")
-            # 오류 발생 시 기본 태스크 반환
-            return {
-                "tasks": [
-                    {
-                        "role": "writer",
-                        "description": "사용자 요청 처리",
-                        "params": {"topic": user_query},
-                        "depends_on": []
-                    }
-                ],
-                "reasoning": "기본 태스크 생성 (오류 발생)"
-            }
+            logger.error(f"LLM API 호출 중 오류 발생: {e}", exc_info=True)
+            # LLM 호출 실패 시 빈 딕셔너리 반환 또는 다른 오류 처리 로직
+            return {"tasks": [], "error": f"LLM API 호출 실패: {e}"}
     
     def _extract_json(self, text: str) -> str:
         """

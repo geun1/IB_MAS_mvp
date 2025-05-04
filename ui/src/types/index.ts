@@ -84,6 +84,7 @@ export interface QueryRequest {
     user_id?: string;
     context?: Record<string, any>;
     agent_configs?: Record<string, Record<string, string>>; // 에이전트별 설정 정보
+    disabled_agents?: string[]; // 비활성화된 에이전트 목록
 }
 
 export interface QueryResponse {
