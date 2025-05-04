@@ -24,6 +24,14 @@ interface TaskGroup {
     tasks: TaskInfo[];
 }
 
+// TaskDecompositionItem 타입 정의 추가
+interface TaskDecompositionItem {
+    description: string;
+    role: string;
+    index: number;
+    level?: number;
+}
+
 // 마크다운 테이블을 HTML로 변환
 const convertMarkdownTablesToHtml = (content: string): string => {
     if (!content) return content;
@@ -235,11 +243,15 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
     const [waitingForResponse, setWaitingForResponse] = useState(false);
     const [conversationStatus, setConversationStatus] =
         useState<ConversationStatus | null>(null);
+    const [pollingStopped, setPollingStopped] = useState(false); // 폴링 중단 상태 추가
+    const [showFinalResult, setShowFinalResult] = useState(false); // 최종 결과 표시 여부 상태
+    // 메시지 수신 확인 지연 타이머 추가
+    const finalMessageTimer = useRef<NodeJS.Timeout | null>(null);
 
     const queryClient = useQueryClient();
     const scrollRef = useRef<HTMLDivElement>(null);
     const additionalPollsCount = useRef(0);
-    const maxAdditionalPolls = 1;
+    const maxAdditionalPolls = 2; // 완료 후 추가 폴링 횟수 2로 유지
 
     // useMutation 정의 (타입 명시)
     const queryMutation = useMutation<QueryResponse, Error, QueryRequest>(
@@ -250,7 +262,15 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                 if (data.conversation_id) {
                     setConversationId(data.conversation_id);
                     setWaitingForResponse(true);
+                    setPollingStopped(false); // 폴링 중단 상태 초기화
                     additionalPollsCount.current = 0;
+                    setShowFinalResult(false); // 새 요청 시 최종 결과 숨김
+
+                    // 이전 타이머가 있으면 정리
+                    if (finalMessageTimer.current) {
+                        clearTimeout(finalMessageTimer.current);
+                        finalMessageTimer.current = null;
+                    }
                 } else {
                     setWaitingForResponse(false);
                 }
@@ -265,8 +285,9 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
     // 대화 상태 폴링 로직 (타입 명시 및 인수 구조 확인)
     const {
         data: conversationData,
-        refetch: refetchConversation,
-        remove: removeConversationQuery,
+        // 불필요한 구조 분해 요소 제거
+        // refetch: refetchConversation,
+        // remove: removeConversationQuery,
     } = useQuery<ConversationStatus | null, Error>(
         // 인수 1: 쿼리 키
         ["conversationStatus", conversationId],
@@ -285,12 +306,13 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
         },
         // 인수 3: 옵션 객체
         {
-            enabled: waitingForResponse && !!conversationId,
+            enabled: waitingForResponse && !!conversationId && !pollingStopped,
             refetchInterval: 3000,
             staleTime: 2000,
             onSuccess: (data) => {
                 if (!data) return;
 
+                // 항상 상태 업데이트 (폴링 중단 여부와 상관없이)
                 setConversationStatus(data);
                 console.log("대화 상태 업데이트:", data);
 
@@ -308,15 +330,24 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                         finalResult: true,
                     };
                     setMessages((prev) => {
-                        const lastMsg = prev[prev.length - 1];
-                        if (
-                            lastMsg?.role === "assistant" &&
-                            lastMsg.finalResult
-                        ) {
+                        // 이미 최종 결과가 추가되었는지 확인
+                        if (prev.some((msg) => msg.finalResult)) {
                             return prev;
                         }
                         return [...prev, assistantMessage];
                     });
+
+                    // 최종 결과를 바로 표시하지 않고 타이머 설정 (중간 처리 과정을 더 볼 수 있도록)
+                    if (finalMessageTimer.current) {
+                        clearTimeout(finalMessageTimer.current);
+                    }
+
+                    // 타이머 시간을 5초로 늘려 중간 결과를 더 오래 볼 수 있게 함
+                    finalMessageTimer.current = setTimeout(() => {
+                        console.log("최종 결과 타이머 실행, 중간 과정 숨김");
+                        setShowFinalResult(true); // 최종 결과 표시 상태 지연 업데이트
+                        finalMessageTimer.current = null;
+                    }, 5000); // 5초 후에 최종 결과 표시
                 }
 
                 // 폴링 중지 로직
@@ -330,13 +361,9 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                             `완료 후 추가 폴링 (${additionalPollsCount.current}/${maxAdditionalPolls})`
                         );
                     } else {
-                        console.log("모든 폴링 완료, 대화 쿼리 제거");
-                        setWaitingForResponse(false);
-                        removeConversationQuery();
-                        queryClient.removeQueries([
-                            "conversationStatus",
-                            conversationId,
-                        ]);
+                        console.log("모든 폴링 완료, 폴링 중단");
+                        setPollingStopped(true); // 폴링 중단 상태로 설정
+                        setWaitingForResponse(false); // 응답 대기 상태 해제
                     }
                 }
             },
@@ -346,11 +373,20 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
     const resetStatusPolling = () => {
         additionalPollsCount.current = 0;
         setConversationStatus(null);
+        setShowFinalResult(false); // 상태 리셋 시 최종 결과 숨김
+        setPollingStopped(false); // 폴링 중단 상태 초기화
+
+        // 타이머 정리
+        if (finalMessageTimer.current) {
+            clearTimeout(finalMessageTimer.current);
+            finalMessageTimer.current = null;
+        }
     };
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
-        if (!query.trim() || queryMutation.isLoading) return;
+        if (!query.trim() || queryMutation.isLoading || waitingForResponse)
+            return; // waitingForResponse 추가
 
         const currentConversationId =
             conversationId || generateConversationId();
@@ -379,11 +415,53 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
         eventEmitter.emit("querySubmitted", {});
     };
 
+    // 컴포넌트 언마운트 시 타이머 정리
+    useEffect(() => {
+        return () => {
+            if (finalMessageTimer.current) {
+                clearTimeout(finalMessageTimer.current);
+            }
+        };
+    }, []);
+
     useEffect(() => {
         if (scrollRef.current) {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
         }
-    }, [messages, conversationStatus]);
+    }, [messages, conversationStatus, showFinalResult]); // showFinalResult 의존성 추가
+
+    // taskDecomposition 렌더링 로직 분리
+    const renderTaskDecomposition = (
+        decomposition: {
+            tasks: TaskDecompositionItem[];
+        } | null
+    ) => {
+        if (
+            !decomposition ||
+            !decomposition.tasks ||
+            decomposition.tasks.length === 0
+        ) {
+            return null;
+        }
+
+        // 태스크 분할 내용을 마크다운 포맷으로 변환
+        const content = decomposition.tasks
+            .map((task) => `- ${task.description} (${task.role})`)
+            .join("\n");
+
+        console.log("태스크 분할 렌더링:", content);
+
+        return (
+            <ProcessMessage
+                key={`ta***REMOVED***decomposition-${conversationId}`}
+                type="task_split"
+                role="task_manager"
+                content={content}
+                timestamp={new Date()} // 적절한 타임스탬프 필요 시 API 응답에서 가져오도록 수정
+                taskDescription="태스크 분할"
+            />
+        );
+    };
 
     return (
         <div className="flex flex-col h-full bg-gray-50 p-4">
@@ -391,9 +469,12 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                 ref={scrollRef}
                 className="flex-grow overflow-y-auto space-y-4 mb-4 pr-2"
             >
+                {/* 사용자 및 최종 Assistant 메시지 */}
                 {messages.map((msg, index) => (
                     <div
-                        key={`${msg.role}-${msg.timestamp.getTime()}-${index}`}
+                        key={`${msg.role}-${msg.timestamp.getTime()}-${index}-${
+                            msg.finalResult ? "final" : "user"
+                        }`}
                         className={`flex ${
                             msg.role === "user"
                                 ? "justify-end"
@@ -404,7 +485,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                             className={`max-w-lg px-4 py-2 rounded-lg shadow-md ${
                                 msg.role === "user"
                                     ? "bg-blue-500 text-white"
-                                    : "bg-white text-gray-800"
+                                    : "bg-white text-gray-800 border border-gray-200" // 최종 결과 스타일 약간 변경
                             }`}
                         >
                             <ReactMarkdown>{msg.content}</ReactMarkdown>
@@ -424,42 +505,75 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                     </div>
                 ))}
 
-                {/* 진행 중 메시지 및 태스크 상태 표시 */}
-                {(waitingForResponse || queryMutation.isLoading) &&
-                    conversationStatus &&
-                    conversationStatus.tasks &&
-                    conversationStatus.tasks.map((task, index) => {
-                        // 태스크 타임스탬프 결정
-                        const taskTimestamp = task.completed_at
-                            ? new Date(task.completed_at * 1000) // 완료 시간 사용
-                            : task.created_at
-                            ? new Date(task.created_at * 1000) // 생성 시간 사용
-                            : new Date(); // 둘 다 없으면 현재 시간
+                {/* 중간 처리 결과 표시 - conversationStatus가 있으면 항상 표시 */}
+                {conversationStatus && (
+                    <>
+                        {/* Task Decomposition 렌더링 - 항상 표시 */}
+                        {conversationStatus.taskDecomposition &&
+                            renderTaskDecomposition(
+                                conversationStatus.taskDecomposition
+                            )}
 
-                        return (
-                            <ProcessMessage
-                                key={task.id || `ta***REMOVED***${index}`}
-                                type={
-                                    task.status === "completed"
-                                        ? "agent_result"
-                                        : "agent_processing"
+                        {/* Task 진행 상태 렌더링 - 최종 결과가 false거나 완료된 태스크만 표시 */}
+                        {conversationStatus.tasks &&
+                            conversationStatus.tasks.map((task, index) => {
+                                // 최종 결과가 표시된 상태에서는 완료된 태스크만 표시 (상태와 무관하게 항상 표시)
+                                if (
+                                    showFinalResult &&
+                                    task.status !== "completed"
+                                ) {
+                                    return null;
                                 }
-                                role={task.role}
-                                content={
-                                    task.status === "completed"
-                                        ? JSON.stringify(
-                                              task.result || "결과 없음"
-                                          )
-                                        : `${
-                                              task.description || "작업"
-                                          } 처리 중...`
+
+                                const taskTimestamp = task.completed_at
+                                    ? new Date(task.completed_at * 1000)
+                                    : task.created_at
+                                    ? new Date(task.created_at * 1000)
+                                    : new Date();
+
+                                // 결과 내용 처리 - 객체일 경우 마크다운 코드 블록으로 변환
+                                let resultContent = "";
+                                if (task.status === "completed") {
+                                    if (typeof task.result === "object") {
+                                        try {
+                                            resultContent = `\`\`\`json\n${JSON.stringify(
+                                                task.result,
+                                                null,
+                                                2
+                                            )}\n\`\`\``;
+                                        } catch (e) {
+                                            resultContent =
+                                                "결과를 표시할 수 없습니다.";
+                                        }
+                                    } else if (task.result) {
+                                        resultContent = String(task.result);
+                                    } else {
+                                        resultContent = "결과 없음";
+                                    }
+                                } else {
+                                    resultContent = `${
+                                        task.description || "작업"
+                                    } 처리 중...`;
                                 }
-                                timestamp={taskTimestamp}
-                                taskDescription={task.description}
-                                taskIndex={task.index}
-                            />
-                        );
-                    })}
+
+                                return (
+                                    <ProcessMessage
+                                        key={`ta***REMOVED***${task.id || index}`}
+                                        type={
+                                            task.status === "completed"
+                                                ? "agent_result"
+                                                : "agent_processing"
+                                        }
+                                        role={task.role}
+                                        content={resultContent}
+                                        timestamp={taskTimestamp}
+                                        taskDescription={task.description}
+                                        taskIndex={index} // API 응답에 index 필드가 없으면 index 사용
+                                    />
+                                );
+                            })}
+                    </>
+                )}
             </div>
 
             <form onSubmit={handleSubmit} className="mt-auto">
@@ -477,12 +591,12 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                         className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         disabled={
                             queryMutation.isLoading ||
-                            waitingForResponse ||
+                            waitingForResponse || // 요청 중일 때 비활성화
                             !query.trim()
                         }
                     >
-                        {queryMutation.isLoading ? (
-                            <span>전송 중...</span>
+                        {queryMutation.isLoading || waitingForResponse ? ( // waitingForResponse 조건 추가
+                            <span>처리 중...</span> // 로딩 텍스트 변경
                         ) : (
                             <span>전송</span>
                         )}
@@ -493,7 +607,10 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
             {/* 에러 메시지 표시 */}
             {queryMutation.isError && (
                 <div className="mt-4 text-red-600 text-sm">
-                    요청 처리 중 오류가 발생했습니다. 다시 시도해주세요.
+                    요청 처리 중 오류가 발생했습니다:{" "}
+                    {queryMutation.error instanceof Error
+                        ? queryMutation.error.message
+                        : "알 수 없는 오류"}
                 </div>
             )}
         </div>

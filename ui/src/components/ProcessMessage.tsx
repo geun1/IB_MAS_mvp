@@ -24,20 +24,22 @@ const ProcessMessage: React.FC<ProcessMessageProps> = ({
     taskIndex,
     taskDescription,
 }) => {
-    // 기본적으로 모든 메시지 타입이 접힌 상태로 시작하도록 수정
-    const [expanded, setExpanded] = useState(false);
+    // 타입에 따라 기본 확장 상태 설정: task_split, agent_result는 기본적으로 펼쳐지게, agent_processing은 접히게
+    const [expanded, setExpanded] = useState(
+        type === "agent_result" || type === "task_split"
+    );
 
     // 메시지 타입에 따라 스타일 결정
     const getBgColor = () => {
         switch (type) {
             case "task_split":
-                return "bg-gray-100";
+                return "bg-gray-100 border border-gray-300";
             case "agent_processing":
-                return "bg-yellow-50";
+                return "bg-yellow-50 border border-yellow-200";
             case "agent_result":
-                return "bg-green-50";
+                return "bg-green-50 border border-green-200";
             default:
-                return "bg-gray-100";
+                return "bg-gray-100 border border-gray-300";
         }
     };
 
@@ -119,9 +121,32 @@ const ProcessMessage: React.FC<ProcessMessageProps> = ({
         return null;
     };
 
+    // 콘텐츠 출력 - 항상 확인 가능하게
+    const renderContent = () => {
+        if (!content.trim()) return null;
+
+        return (
+            <div
+                className={`mt-2 max-w-full overflow-x-auto prose prose-sm ${
+                    !expanded ? "max-h-20 overflow-y-hidden" : ""
+                }`}
+            >
+                <ReactMarkdown>{content}</ReactMarkdown>
+                {!expanded && content.length > 100 && (
+                    <div
+                        className="text-xs text-center text-gray-500 mt-1 cursor-pointer"
+                        onClick={() => setExpanded(true)}
+                    >
+                        더 보기...
+                    </div>
+                )}
+            </div>
+        );
+    };
+
     return (
         <div
-            className={`rounded-lg p-3 mr-auto w-full ${getBgColor()} ${className} mb-2`}
+            className={`rounded-lg p-3 mr-auto w-full shadow-sm ${getBgColor()} ${className} mb-2`}
         >
             <div className="flex justify-between items-start">
                 <div className="flex items-center space-x-2">
@@ -167,12 +192,7 @@ const ProcessMessage: React.FC<ProcessMessageProps> = ({
             </div>
 
             {renderTaskInfo()}
-
-            {expanded && (
-                <div className="mt-2 max-w-full overflow-x-auto prose prose-sm">
-                    <ReactMarkdown>{content}</ReactMarkdown>
-                </div>
-            )}
+            {renderContent()}
         </div>
     );
 };
