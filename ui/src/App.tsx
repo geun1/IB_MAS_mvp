@@ -6,7 +6,6 @@ import TaskMonitor from "./components/TaskMonitor";
 import AgentStatus from "./components/AgentStatus";
 import ResultViewer from "./components/ResultViewer";
 import ConversationList from "./components/ConversationList";
-import AgentSettings from "./pages/AgentSettings";
 
 // 홈 페이지 컴포넌트 - 대화형 UI로 변경
 const Home: React.FC = () => {
@@ -83,21 +82,12 @@ const App: React.FC = () => {
                                     홈
                                 </Link>
                             </li>
-                            <li>
-                                <Link
-                                    to="/settings"
-                                    className="text-blue-600 hover:text-blue-800"
-                                >
-                                    에이전트 설정
-                                </Link>
-                            </li>
                         </ul>
                     </nav>
                 </header>
 
                 <Routes>
                     <Route path="/" element={<Home />} />
-                    <Route path="/settings" element={<AgentSettings />} />
                 </Routes>
             </div>
         </Router>

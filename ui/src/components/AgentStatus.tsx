@@ -2,11 +2,17 @@ import React, { useState } from "react";
 import { useQuery } from "react-query";
 import { registryApi } from "../api/registry";
 import { Agent } from "../types";
+import AgentConfigManager from "./AgentConfigManager";
+import Modal from "./Modal";
 
 const AgentStatus: React.FC = () => {
     // 에이전트 목록 및 필터링 상태
     const [filter, setFilter] = useState<string>("all");
     const [searchTerm, setSearchTerm] = useState<string>("");
+
+    // 설정 모달 상태
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [selectedAgentRole, setSelectedAgentRole] = useState<string>("");
 
     // 에이전트 목록 조회
     const {
@@ -45,6 +51,17 @@ const AgentStatus: React.FC = () => {
             default:
                 return "알 수 없음";
         }
+    };
+
+    // 에이전트 설정 모달 열기
+    const openConfigModal = (role: string) => {
+        setSelectedAgentRole(role);
+        setIsModalOpen(true);
+    };
+
+    // 설정 모달 닫기
+    const closeConfigModal = () => {
+        setIsModalOpen(false);
     };
 
     // 필터링된 에이전트 목록
@@ -171,76 +188,18 @@ const AgentStatus: React.FC = () => {
                                     </p>
                                 </div>
 
-                                {/* 활성 태스크 수 */}
-                                <div className="text-right">
-                                    <div className="text-sm text-gray-500">
-                                        활성 태스크
-                                    </div>
-                                    <div className="text-lg font-semibold">
-                                        {agent.active_tasks}
-                                    </div>
-                                </div>
+                                {/* 설정 버튼 */}
+                                <button
+                                    onClick={() => openConfigModal(agent.role)}
+                                    className="px-3 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition-colors text-sm"
+                                >
+                                    설정
+                                </button>
                             </div>
 
                             {/* 추가 정보 표시 */}
                             <div className="mt-2 flex flex-wrap text-xs text-gray-500 gap-x-4">
                                 <div>ID: {agent.id.substring(0, 8)}...</div>
-
-                                {agent.metrics && (
-                                    <>
-                                        {agent.metrics.memory_usage !==
-                                            undefined && (
-                                            <div>
-                                                메모리:{" "}
-                                                {Math.round(
-                                                    agent.metrics.memory_usage *
-                                                        100
-                                                ) / 100}
-                                                %
-                                            </div>
-                                        )}
-                                        {agent.metrics.cpu_usage !==
-                                            undefined && (
-                                            <div>
-                                                CPU:{" "}
-                                                {Math.round(
-                                                    agent.metrics.cpu_usage *
-                                                        100
-                                                ) / 100}
-                                                %
-                                            </div>
-                                        )}
-                                    </>
-                                )}
-
-                                {agent.last_heartbeat && (
-                                    <div>
-                                        최근 활동:{" "}
-                                        {new Date(
-                                            agent.last_heartbeat
-                                        ).toLocaleString()}
-                                    </div>
-                                )}
-                            </div>
-
-                            {/* 부하 표시 게이지 바 */}
-                            <div className="mt-2">
-                                <div className="flex justify-between text-xs mb-1">
-                                    <span>부하</span>
-                                    <span>{agent.load}%</span>
-                                </div>
-                                <div className="w-full bg-gray-200 rounded-full h-1.5">
-                                    <div
-                                        className={`h-1.5 rounded-full ${
-                                            agent.load > 75
-                                                ? "bg-red-500"
-                                                : agent.load > 50
-                                                ? "bg-yellow-500"
-                                                : "bg-green-500"
-                                        }`}
-                                        style={{ width: `${agent.load}%` }}
-                                    ></div>
-                                </div>
                             </div>
                         </div>
                     ))}
@@ -248,12 +207,32 @@ const AgentStatus: React.FC = () => {
             ) : (
                 <div className="text-center py-8 text-gray-500">
                     {searchTerm || filter !== "all" ? (
-                        <p>필터 조건에 맞는 에이전트가 없습니다.</p>
+                        <>
+                            <p>조건에 맞는 에이전트가 없습니다.</p>
+                            <button
+                                onClick={() => {
+                                    setSearchTerm("");
+                                    setFilter("all");
+                                }}
+                                className="text-blue-500 hover:underline mt-2"
+                            >
+                                필터 초기화
+                            </button>
+                        </>
                     ) : (
                         <p>등록된 에이전트가 없습니다.</p>
                     )}
                 </div>
             )}
+
+            {/* 에이전트 설정 모달 */}
+            <Modal
+                isOpen={isModalOpen}
+                onClose={closeConfigModal}
+                title={`${selectedAgentRole} 설정`}
+            >
+                <AgentConfigManager selectedAgentRole={selectedAgentRole} />
+            </Modal>
         </div>
     );
 };
