@@ -32,6 +32,17 @@ interface TaskDecompositionItem {
     level?: number;
 }
 
+// 대화 단위 상태 인터페이스
+interface ConversationUnit {
+    userMessage: Message; // 사용자 메시지
+    systemResponses: {
+        // 시스템 응답들
+        taskDecomposition?: JSX.Element; // 태스크 분할 결과
+        taskResults: JSX.Element[]; // 태스크 별 에이전트 결과들
+        finalResponse?: Message; // 최종 응답
+    };
+}
+
 // 마크다운 테이블을 HTML로 변환
 const convertMarkdownTablesToHtml = (content: string): string => {
     if (!content) return content;
@@ -238,15 +249,17 @@ function generateConversationId(): string {
 
 const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
     const [query, setQuery] = useState("");
-    const [messages, setMessages] = useState<Message[]>([]);
+    const [userMessages, setUserMessages] = useState<Message[]>([]); // 사용자 메시지만 저장
+    const [currentConversationUnit, setCurrentConversationUnit] =
+        useState<ConversationUnit | null>(null); // 현재 진행 중인 대화 단위
+    const [completedUnits, setCompletedUnits] = useState<ConversationUnit[]>(
+        []
+    ); // 완료된 대화 단위들
     const [conversationId, setConversationId] = useState<string | null>(null);
     const [waitingForResponse, setWaitingForResponse] = useState(false);
     const [conversationStatus, setConversationStatus] =
         useState<ConversationStatus | null>(null);
     const [pollingStopped, setPollingStopped] = useState(false); // 폴링 중단 상태 추가
-    const [showFinalResult, setShowFinalResult] = useState(false); // 최종 결과 표시 여부 상태
-    // 메시지 수신 확인 지연 타이머 추가
-    const finalMessageTimer = useRef<NodeJS.Timeout | null>(null);
 
     const queryClient = useQueryClient();
     const scrollRef = useRef<HTMLDivElement>(null);
@@ -264,13 +277,6 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                     setWaitingForResponse(true);
                     setPollingStopped(false); // 폴링 중단 상태 초기화
                     additionalPollsCount.current = 0;
-                    setShowFinalResult(false); // 새 요청 시 최종 결과 숨김
-
-                    // 이전 타이머가 있으면 정리
-                    if (finalMessageTimer.current) {
-                        clearTimeout(finalMessageTimer.current);
-                        finalMessageTimer.current = null;
-                    }
                 } else {
                     setWaitingForResponse(false);
                 }
@@ -283,12 +289,10 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
     );
 
     // 대화 상태 폴링 로직 (타입 명시 및 인수 구조 확인)
-    const {
-        data: conversationData,
-        // 불필요한 구조 분해 요소 제거
-        // refetch: refetchConversation,
-        // remove: removeConversationQuery,
-    } = useQuery<ConversationStatus | null, Error>(
+    const { data: conversationData } = useQuery<
+        ConversationStatus | null,
+        Error
+    >(
         // 인수 1: 쿼리 키
         ["conversationStatus", conversationId],
         // 인수 2: 쿼리 함수
@@ -316,39 +320,8 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                 setConversationStatus(data);
                 console.log("대화 상태 업데이트:", data);
 
-                // 최종 사용자 메시지 추가
-                if (
-                    (data.status === "completed" ||
-                        data.status === "partially_completed") &&
-                    data.message
-                ) {
-                    const assistantMessage: Message = {
-                        role: "assistant",
-                        content: data.message,
-                        timestamp: new Date(),
-                        conversationId: data.conversation_id,
-                        finalResult: true,
-                    };
-                    setMessages((prev) => {
-                        // 이미 최종 결과가 추가되었는지 확인
-                        if (prev.some((msg) => msg.finalResult)) {
-                            return prev;
-                        }
-                        return [...prev, assistantMessage];
-                    });
-
-                    // 최종 결과를 바로 표시하지 않고 타이머 설정 (중간 처리 과정을 더 볼 수 있도록)
-                    if (finalMessageTimer.current) {
-                        clearTimeout(finalMessageTimer.current);
-                    }
-
-                    // 타이머 시간을 5초로 늘려 중간 결과를 더 오래 볼 수 있게 함
-                    finalMessageTimer.current = setTimeout(() => {
-                        console.log("최종 결과 타이머 실행, 중간 과정 숨김");
-                        setShowFinalResult(true); // 최종 결과 표시 상태 지연 업데이트
-                        finalMessageTimer.current = null;
-                    }, 5000); // 5초 후에 최종 결과 표시
-                }
+                // 현재 대화 단위 업데이트
+                updateCurrentConversationUnit(data);
 
                 // 폴링 중지 로직
                 if (
@@ -363,6 +336,20 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                     } else {
                         console.log("모든 폴링 완료, 폴링 중단");
                         setPollingStopped(true); // 폴링 중단 상태로 설정
+
+                        // 현재 대화 단위를 완료된 대화 단위로 이동
+                        if (
+                            currentConversationUnit &&
+                            currentConversationUnit.systemResponses
+                                .finalResponse
+                        ) {
+                            setCompletedUnits((prev) => [
+                                ...prev,
+                                currentConversationUnit,
+                            ]);
+                            setCurrentConversationUnit(null);
+                        }
+
                         setWaitingForResponse(false); // 응답 대기 상태 해제
                     }
                 }
@@ -370,41 +357,169 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
         }
     );
 
+    // 현재 대화 단위 업데이트 함수
+    const updateCurrentConversationUnit = (data: ConversationStatus) => {
+        setCurrentConversationUnit((prev) => {
+            if (!prev && userMessages.length === 0) return null;
+
+            // 새 대화 단위 초기화
+            const updatedUnit: ConversationUnit = prev || {
+                userMessage: userMessages[userMessages.length - 1],
+                systemResponses: {
+                    taskResults: [],
+                },
+            };
+
+            // 태스크 분할 결과 업데이트
+            if (
+                data.taskDecomposition &&
+                !updatedUnit.systemResponses.taskDecomposition
+            ) {
+                updatedUnit.systemResponses.taskDecomposition =
+                    renderTaskDecomposition(data.taskDecomposition);
+            }
+
+            // 태스크 결과 업데이트
+            if (data.tasks && data.tasks.length > 0) {
+                const taskElements = data.tasks.map((task, index) => {
+                    const taskTimestamp = task.completed_at
+                        ? new Date(task.completed_at * 1000)
+                        : task.created_at
+                        ? new Date(task.created_at * 1000)
+                        : new Date();
+
+                    // 결과 내용 처리 - 객체일 경우 마크다운 코드 블록으로 변환
+                    let resultContent = "";
+                    if (task.status === "completed") {
+                        if (typeof task.result === "object") {
+                            try {
+                                resultContent = `\`\`\`json\n${JSON.stringify(
+                                    task.result,
+                                    null,
+                                    2
+                                )}\n\`\`\``;
+                            } catch (e) {
+                                resultContent = "결과를 표시할 수 없습니다.";
+                            }
+                        } else if (task.result) {
+                            resultContent = String(task.result);
+                        } else {
+                            resultContent = "결과 없음";
+                        }
+                    } else {
+                        resultContent = `${
+                            task.description || "작업"
+                        } 처리 중...`;
+                    }
+
+                    return (
+                        <ProcessMessage
+                            key={`ta***REMOVED***${task.id || index}`}
+                            type={
+                                task.status === "completed"
+                                    ? "agent_result"
+                                    : "agent_processing"
+                            }
+                            role={task.role}
+                            content={resultContent}
+                            timestamp={taskTimestamp}
+                            taskDescription={task.description}
+                            taskIndex={index}
+                        />
+                    );
+                });
+
+                // 완료된 태스크만 필터링하여 처리 중 상태는 최신 것으로 유지
+                const existingTaskIds = new Set(
+                    updatedUnit.systemResponses.taskResults.map(
+                        (element) => element.key?.toString() || ""
+                    )
+                );
+
+                const newTaskElements = taskElements.filter((element) => {
+                    const elementKey = element.key?.toString() || "";
+                    return (
+                        !existingTaskIds.has(elementKey) ||
+                        element.props.type === "agent_processing"
+                    );
+                });
+
+                updatedUnit.systemResponses.taskResults = [
+                    ...updatedUnit.systemResponses.taskResults.filter(
+                        (element) => {
+                            const elementKey = element.key?.toString() || "";
+                            const isProcessing =
+                                element.props.type === "agent_processing";
+                            return (
+                                !isProcessing ||
+                                !newTaskElements.some(
+                                    (newElement) =>
+                                        newElement.key?.toString() ===
+                                        elementKey
+                                )
+                            );
+                        }
+                    ),
+                    ...newTaskElements,
+                ];
+            }
+
+            // 최종 응답 업데이트
+            if (
+                (data.status === "completed" ||
+                    data.status === "partially_completed") &&
+                data.message &&
+                !updatedUnit.systemResponses.finalResponse
+            ) {
+                updatedUnit.systemResponses.finalResponse = {
+                    role: "assistant",
+                    content: data.message,
+                    timestamp: new Date(),
+                    conversationId: data.conversation_id,
+                    finalResult: true,
+                };
+            }
+
+            return updatedUnit;
+        });
+    };
+
     const resetStatusPolling = () => {
         additionalPollsCount.current = 0;
         setConversationStatus(null);
-        setShowFinalResult(false); // 상태 리셋 시 최종 결과 숨김
         setPollingStopped(false); // 폴링 중단 상태 초기화
-
-        // 타이머 정리
-        if (finalMessageTimer.current) {
-            clearTimeout(finalMessageTimer.current);
-            finalMessageTimer.current = null;
-        }
     };
 
     const handleSubmit = (e: React.FormEvent) => {
         e.preventDefault();
         if (!query.trim() || queryMutation.isLoading || waitingForResponse)
-            return; // waitingForResponse 추가
+            return;
 
-        const currentConversationId =
-            conversationId || generateConversationId();
+        const currentConvId = conversationId || generateConversationId();
         if (!conversationId) {
-            setConversationId(currentConversationId);
+            setConversationId(currentConvId);
         }
 
+        // 새 사용자 메시지 생성
         const userMessage: Message = {
             role: "user",
             content: query,
             timestamp: new Date(),
-            conversationId: currentConversationId,
+            conversationId: currentConvId,
         };
-        setMessages((prev) => [...prev, userMessage]);
+
+        // 이전 대화가 있으면 완료된 대화로 이동
+        if (currentConversationUnit) {
+            setCompletedUnits((prev) => [...prev, currentConversationUnit]);
+            setCurrentConversationUnit(null);
+        }
+
+        // 새 사용자 메시지 저장
+        setUserMessages((prev) => [...prev, userMessage]);
 
         const request: QueryRequest = {
             query: query.trim(),
-            conversation_id: currentConversationId,
+            conversation_id: currentConvId,
         };
 
         queryMutation.mutate(request);
@@ -415,12 +530,10 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
         eventEmitter.emit("querySubmitted", {});
     };
 
-    // 컴포넌트 언마운트 시 타이머 정리
+    // 컴포넌트 언마운트 시 정리
     useEffect(() => {
         return () => {
-            if (finalMessageTimer.current) {
-                clearTimeout(finalMessageTimer.current);
-            }
+            // 정리 로직
         };
     }, []);
 
@@ -428,20 +541,20 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
         if (scrollRef.current) {
             scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
         }
-    }, [messages, conversationStatus, showFinalResult]); // showFinalResult 의존성 추가
+    }, [completedUnits, currentConversationUnit, userMessages]);
 
     // taskDecomposition 렌더링 로직 분리
     const renderTaskDecomposition = (
         decomposition: {
             tasks: TaskDecompositionItem[];
         } | null
-    ) => {
+    ): JSX.Element | undefined => {
         if (
             !decomposition ||
             !decomposition.tasks ||
             decomposition.tasks.length === 0
         ) {
-            return null;
+            return undefined;
         }
 
         // 태스크 분할 내용을 마크다운 포맷으로 변환
@@ -457,11 +570,41 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                 type="task_split"
                 role="task_manager"
                 content={content}
-                timestamp={new Date()} // 적절한 타임스탬프 필요 시 API 응답에서 가져오도록 수정
+                timestamp={new Date()}
                 taskDescription="태스크 분할"
             />
         );
     };
+
+    // 사용자 메시지 렌더링 함수
+    const renderUserMessage = (message: Message, key: string) => (
+        <div key={key} className="flex justify-end">
+            <div className="max-w-lg px-4 py-2 rounded-lg shadow-md bg-blue-500 text-white">
+                <ReactMarkdown>{message.content}</ReactMarkdown>
+                <div className="text-xs mt-1 text-blue-100 text-right">
+                    {message.timestamp.toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                    })}
+                </div>
+            </div>
+        </div>
+    );
+
+    // 최종 응답 메시지 렌더링 함수
+    const renderFinalResponse = (message: Message, key: string) => (
+        <div key={key} className="flex justify-start">
+            <div className="max-w-lg px-4 py-2 rounded-lg shadow-md bg-white text-gray-800 border border-gray-200">
+                <ReactMarkdown>{message.content}</ReactMarkdown>
+                <div className="text-xs mt-1 text-gray-400 text-left">
+                    {message.timestamp.toLocaleTimeString([], {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                    })}
+                </div>
+            </div>
+        </div>
+    );
 
     return (
         <div className="flex flex-col h-full bg-gray-50 p-4">
@@ -469,110 +612,70 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                 ref={scrollRef}
                 className="flex-grow overflow-y-auto space-y-4 mb-4 pr-2"
             >
-                {/* 사용자 및 최종 Assistant 메시지 */}
-                {messages.map((msg, index) => (
-                    <div
-                        key={`${msg.role}-${msg.timestamp.getTime()}-${index}-${
-                            msg.finalResult ? "final" : "user"
-                        }`}
-                        className={`flex ${
-                            msg.role === "user"
-                                ? "justify-end"
-                                : "justify-start"
-                        }`}
-                    >
-                        <div
-                            className={`max-w-lg px-4 py-2 rounded-lg shadow-md ${
-                                msg.role === "user"
-                                    ? "bg-blue-500 text-white"
-                                    : "bg-white text-gray-800 border border-gray-200" // 최종 결과 스타일 약간 변경
-                            }`}
-                        >
-                            <ReactMarkdown>{msg.content}</ReactMarkdown>
-                            <div
-                                className={`text-xs mt-1 ${
-                                    msg.role === "user"
-                                        ? "text-blue-100 text-right"
-                                        : "text-gray-400 text-left"
-                                }`}
-                            >
-                                {msg.timestamp.toLocaleTimeString([], {
-                                    hour: "2-digit",
-                                    minute: "2-digit",
-                                })}
-                            </div>
+                {/* 완료된 대화 단위 렌더링 */}
+                {completedUnits.map((unit, index) => (
+                    <div key={`unit-${index}`} className="space-y-4">
+                        {/* 사용자 메시지 */}
+                        {renderUserMessage(unit.userMessage, `user-${index}`)}
+
+                        {/* 시스템 응답들 */}
+                        <div className="pl-6 space-y-2">
+                            {/* 태스크 분할 결과 */}
+                            {unit.systemResponses.taskDecomposition}
+
+                            {/* 태스크 결과들 */}
+                            {unit.systemResponses.taskResults.map(
+                                (taskResult, taskIndex) =>
+                                    React.cloneElement(taskResult, {
+                                        key: `ta***REMOVED***result-${index}-${taskIndex}`,
+                                    })
+                            )}
+
+                            {/* 최종 응답 */}
+                            {unit.systemResponses.finalResponse &&
+                                renderFinalResponse(
+                                    unit.systemResponses.finalResponse,
+                                    `final-${index}`
+                                )}
                         </div>
                     </div>
                 ))}
 
-                {/* 중간 처리 결과 표시 - conversationStatus가 있으면 항상 표시 */}
-                {conversationStatus && (
-                    <>
-                        {/* Task Decomposition 렌더링 - 항상 표시 */}
-                        {conversationStatus.taskDecomposition &&
-                            renderTaskDecomposition(
-                                conversationStatus.taskDecomposition
+                {/* 현재 진행 중인 대화 단위 */}
+                {currentConversationUnit && (
+                    <div className="space-y-4">
+                        {/* 사용자 메시지 */}
+                        {renderUserMessage(
+                            currentConversationUnit.userMessage,
+                            `current-user`
+                        )}
+
+                        {/* 현재 처리 중인 시스템 응답들 */}
+                        <div className="pl-6 space-y-2">
+                            {/* 태스크 분할 결과 */}
+                            {
+                                currentConversationUnit.systemResponses
+                                    .taskDecomposition
+                            }
+
+                            {/* 태스크 결과들 */}
+                            {currentConversationUnit.systemResponses.taskResults.map(
+                                (taskResult, taskIndex) =>
+                                    React.cloneElement(taskResult, {
+                                        key: `current-ta***REMOVED***${taskIndex}`,
+                                    })
                             )}
 
-                        {/* Task 진행 상태 렌더링 - 최종 결과가 false거나 완료된 태스크만 표시 */}
-                        {conversationStatus.tasks &&
-                            conversationStatus.tasks.map((task, index) => {
-                                // 최종 결과가 표시된 상태에서는 완료된 태스크만 표시 (상태와 무관하게 항상 표시)
-                                if (
-                                    showFinalResult &&
-                                    task.status !== "completed"
-                                ) {
-                                    return null;
-                                }
-
-                                const taskTimestamp = task.completed_at
-                                    ? new Date(task.completed_at * 1000)
-                                    : task.created_at
-                                    ? new Date(task.created_at * 1000)
-                                    : new Date();
-
-                                // 결과 내용 처리 - 객체일 경우 마크다운 코드 블록으로 변환
-                                let resultContent = "";
-                                if (task.status === "completed") {
-                                    if (typeof task.result === "object") {
-                                        try {
-                                            resultContent = `\`\`\`json\n${JSON.stringify(
-                                                task.result,
-                                                null,
-                                                2
-                                            )}\n\`\`\``;
-                                        } catch (e) {
-                                            resultContent =
-                                                "결과를 표시할 수 없습니다.";
-                                        }
-                                    } else if (task.result) {
-                                        resultContent = String(task.result);
-                                    } else {
-                                        resultContent = "결과 없음";
-                                    }
-                                } else {
-                                    resultContent = `${
-                                        task.description || "작업"
-                                    } 처리 중...`;
-                                }
-
-                                return (
-                                    <ProcessMessage
-                                        key={`ta***REMOVED***${task.id || index}`}
-                                        type={
-                                            task.status === "completed"
-                                                ? "agent_result"
-                                                : "agent_processing"
-                                        }
-                                        role={task.role}
-                                        content={resultContent}
-                                        timestamp={taskTimestamp}
-                                        taskDescription={task.description}
-                                        taskIndex={index} // API 응답에 index 필드가 없으면 index 사용
-                                    />
-                                );
-                            })}
-                    </>
+                            {/* 최종 응답 */}
+                            {currentConversationUnit.systemResponses
+                                .finalResponse &&
+                                renderFinalResponse(
+                                    currentConversationUnit.systemResponses
+                                        .finalResponse,
+                                    `current-final`
+                                )}
+                        </div>
+                    </div>
                 )}
             </div>
 
@@ -591,12 +694,12 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                         className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                         disabled={
                             queryMutation.isLoading ||
-                            waitingForResponse || // 요청 중일 때 비활성화
+                            waitingForResponse ||
                             !query.trim()
                         }
                     >
-                        {queryMutation.isLoading || waitingForResponse ? ( // waitingForResponse 조건 추가
-                            <span>처리 중...</span> // 로딩 텍스트 변경
+                        {queryMutation.isLoading || waitingForResponse ? (
+                            <span>처리 중...</span>
                         ) : (
                             <span>전송</span>
                         )}

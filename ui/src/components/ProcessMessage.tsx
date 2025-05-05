@@ -24,10 +24,8 @@ const ProcessMessage: React.FC<ProcessMessageProps> = ({
     taskIndex,
     taskDescription,
 }) => {
-    // 타입에 따라 기본 확장 상태 설정: task_split, agent_result는 기본적으로 펼쳐지게, agent_processing은 접히게
-    const [expanded, setExpanded] = useState(
-        type === "agent_result" || type === "task_split"
-    );
+    // 모든 메시지 타입에 대해 기본 상태를 접힌 상태로 설정
+    const [expanded, setExpanded] = useState(false);
 
     // 메시지 타입에 따라 스타일 결정
     const getBgColor = () => {
@@ -121,25 +119,14 @@ const ProcessMessage: React.FC<ProcessMessageProps> = ({
         return null;
     };
 
-    // 콘텐츠 출력 - 항상 확인 가능하게
+    // 콘텐츠 출력 - 확장 상태일 때만 내용 표시
     const renderContent = () => {
-        if (!content.trim()) return null;
+        if (!content.trim() || !expanded) return null;
 
+        // 확장 상태일 때만 내용 표시
         return (
-            <div
-                className={`mt-2 max-w-full overflow-x-auto prose prose-sm ${
-                    !expanded ? "max-h-20 overflow-y-hidden" : ""
-                }`}
-            >
+            <div className="mt-2 max-w-full overflow-x-auto prose prose-sm max-h-80 overflow-y-auto">
                 <ReactMarkdown>{content}</ReactMarkdown>
-                {!expanded && content.length > 100 && (
-                    <div
-                        className="text-xs text-center text-gray-500 mt-1 cursor-pointer"
-                        onClick={() => setExpanded(true)}
-                    >
-                        더 보기...
-                    </div>
-                )}
             </div>
         );
     };
