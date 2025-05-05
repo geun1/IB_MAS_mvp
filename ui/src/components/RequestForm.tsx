@@ -266,6 +266,54 @@ function generateConversationId(): string {
     );
 }
 
+// 로딩 상태 메시지 컴포넌트 추가
+const LoadingMessage: React.FC<{
+    type: "decomposition" | "agent" | "integration";
+}> = ({ type }) => {
+    const getMessage = () => {
+        switch (type) {
+            case "decomposition":
+                return "태스크 분해 중...";
+            case "agent":
+                return "에이전트 작업 처리 중...";
+            case "integration":
+                return "최종 결과 생성 중...";
+        }
+    };
+
+    const getIcon = () => {
+        return (
+            <svg
+                className="animate-spin -ml-1 mr-2 h-4 w-4 text-blue-500"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+            >
+                <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                ></circle>
+                <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                ></path>
+            </svg>
+        );
+    };
+
+    return (
+        <div className="flex items-center text-blue-500 font-medium px-3 py-2 bg-blue-50 rounded-md shadow-sm border border-blue-100 mb-2">
+            {getIcon()}
+            {getMessage()}
+        </div>
+    );
+};
+
 const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
     const [query, setQuery] = useState("");
     const [userMessages, setUserMessages] = useState<Message[]>([]); // 사용자 메시지만 저장
@@ -546,14 +594,27 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                     // 응답 대기 상태 해제
                     setWaitingForResponse(false);
 
-                    // 현재 대화 단위를 완료된 대화 단위로 이동
-                    setCurrentConversationUnit((prev) => {
-                        if (prev) {
-                            setCompletedUnits((units) => [...units, prev]);
-                            return null;
-                        }
-                        return prev;
-                    });
+                    // 현재 대화 단위를 완료된 대화 단위로 이동 (동기적으로 처리)
+                    // 이전 방식 대신 직접 상태 업데이트
+                    if (currentConversationUnit) {
+                        // 현재 대화 단위를 완료된 대화 단위에 바로 추가
+                        console.log("[대화] 현재 대화 완료 처리");
+                        const updatedCompletedUnits = [
+                            ...completedUnits,
+                            currentConversationUnit,
+                        ];
+                        setCompletedUnits(updatedCompletedUnits);
+                        setCurrentConversationUnit(null);
+
+                        // 두 번의 상태 업데이트 방지를 위해 이전 비동기 방식 제거
+                        // setCurrentConversationUnit((prev) => {
+                        //     if (prev) {
+                        //         setCompletedUnits((units) => [...units, prev]);
+                        //         return null;
+                        //     }
+                        //     return prev;
+                        // });
+                    }
                 }
             },
             onError: (error) => {
@@ -720,6 +781,14 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
         // 새 사용자 메시지 저장
         setUserMessages((prev) => [...prev, userMessage]);
 
+        // 즉시 빈 대화 단위 생성 (사용자 메시지가 바로 표시됨)
+        setCurrentConversationUnit({
+            userMessage,
+            systemResponses: {
+                taskResults: [],
+            },
+        });
+
         const request: QueryRequest = {
             query: query.trim(),
             conversation_id: currentConvId,
@@ -773,9 +842,9 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
             return undefined;
         }
 
-        // 태스크 분할 내용을 마크다운 포맷으로 변환
+        // 태스크 분할 내용을 마크다운 포맷으로 변환 (에이전트 역할 제거)
         const content = decomposition.tasks
-            .map((task) => `- ${task.description} (${task.role})`)
+            .map((task) => `- ${task.description}`)
             .join("\n");
 
         console.log("태스크 분할 렌더링:", content);
@@ -822,6 +891,62 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
         </div>
     );
 
+    // 현재 대화 단위 렌더링 함수
+    const renderCurrentConversation = () => {
+        if (!currentConversationUnit) return null;
+
+        return (
+            <div className="space-y-4">
+                {/* 사용자 메시지 */}
+                {renderUserMessage(
+                    currentConversationUnit.userMessage,
+                    `current-user`
+                )}
+
+                {/* 진행 중인 시스템 응답들 */}
+                <div className="pl-6 space-y-2">
+                    {/* 태스크 분해 중 로딩 표시 */}
+                    {pollingState.decompositionPolling &&
+                        !currentConversationUnit.systemResponses
+                            .taskDecomposition && (
+                            <LoadingMessage type="decomposition" />
+                        )}
+
+                    {/* 태스크 분할 결과 */}
+                    {currentConversationUnit.systemResponses.taskDecomposition}
+
+                    {/* 에이전트 작업 중 로딩 표시 */}
+                    {pollingState.taskResultPolling && (
+                        <LoadingMessage type="agent" />
+                    )}
+
+                    {/* 태스크 결과들 */}
+                    {currentConversationUnit.systemResponses.taskResults.map(
+                        (taskResult, taskIndex) =>
+                            React.cloneElement(taskResult, {
+                                key: `current-ta***REMOVED***${taskIndex}`,
+                            })
+                    )}
+
+                    {/* 결과 통합 중 로딩 표시 */}
+                    {pollingState.finalResultPolling &&
+                        !currentConversationUnit.systemResponses
+                            .finalResponse && (
+                            <LoadingMessage type="integration" />
+                        )}
+
+                    {/* 최종 응답 */}
+                    {currentConversationUnit.systemResponses.finalResponse &&
+                        renderFinalResponse(
+                            currentConversationUnit.systemResponses
+                                .finalResponse,
+                            `current-final`
+                        )}
+                </div>
+            </div>
+        );
+    };
+
     return (
         <div className="flex flex-col h-full bg-gray-50 p-4">
             <div
@@ -858,41 +983,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                 ))}
 
                 {/* 현재 진행 중인 대화 단위 */}
-                {currentConversationUnit && (
-                    <div className="space-y-4">
-                        {/* 사용자 메시지 */}
-                        {renderUserMessage(
-                            currentConversationUnit.userMessage,
-                            `current-user`
-                        )}
-
-                        {/* 현재 처리 중인 시스템 응답들 */}
-                        <div className="pl-6 space-y-2">
-                            {/* 태스크 분할 결과 */}
-                            {
-                                currentConversationUnit.systemResponses
-                                    .taskDecomposition
-                            }
-
-                            {/* 태스크 결과들 */}
-                            {currentConversationUnit.systemResponses.taskResults.map(
-                                (taskResult, taskIndex) =>
-                                    React.cloneElement(taskResult, {
-                                        key: `current-ta***REMOVED***${taskIndex}`,
-                                    })
-                            )}
-
-                            {/* 최종 응답 */}
-                            {currentConversationUnit.systemResponses
-                                .finalResponse &&
-                                renderFinalResponse(
-                                    currentConversationUnit.systemResponses
-                                        .finalResponse,
-                                    `current-final`
-                                )}
-                        </div>
-                    </div>
-                )}
+                {renderCurrentConversation()}
             </div>
 
             <form onSubmit={handleSubmit} className="mt-auto">
