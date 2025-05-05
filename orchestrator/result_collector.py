@@ -691,14 +691,14 @@ class ResultCollector:
                 nested_result = result_data["result"]
                 
                 # 중첩된 데이터 필드 검색
-                for field_name in ["data", "raw_data", "content", "analysis"]:
+                for field_name in ["data", "raw_data", "content", "analysis", "raw_results"]:
                     if field_name in nested_result and nested_result[field_name]:
                         # "[name]_nested"로 키 저장하여 최상위 필드와 구분
                         extracted_data[dep_role][f"{field_name}_nested"] = nested_result[field_name]
                 
                 # 다른 의미있는 필드 확인
                 for key, value in nested_result.items():
-                    if key not in ["data", "raw_data", "content", "analysis"] and value and isinstance(value, (dict, list, str)):
+                    if key not in ["data", "raw_data", "content", "analysis", "raw_results"] and value and isinstance(value, (dict, list, str)):
                         extracted_data[dep_role][f"result_{key}"] = value
                         
             # 3. 특수한 데이터 구조 처리 (다양한 에이전트 출력 패턴)
@@ -713,6 +713,15 @@ class ResultCollector:
             # 3.3 검색 결과 처리 (search_agent)
             if "search_results" in result_data:
                 extracted_data[dep_role]["search_results"] = result_data["search_results"]
+            
+            # 3.4 웹검색 에이전트 검색 결과가 중첩 구조에 있는 경우
+            if "result" in result_data and isinstance(result_data["result"], dict):
+                if "raw_results" in result_data["result"]:
+                    extracted_data[dep_role]["search_results"] = result_data["result"]["raw_results"]
+                    extracted_data[dep_role]["search_content"] = result_data["result"].get("content", "")
+                elif dep_role == "web_search":
+                    # 웹검색 에이전트 결과에서 콘텐츠를 검색 결과로 처리
+                    extracted_data[dep_role]["search_content"] = result_data["result"].get("content", "")
                 
             # 태스크 ID 정보 추가 (출처 추적용)
             extracted_data[dep_role]["source_task_id"] = dep_task_id

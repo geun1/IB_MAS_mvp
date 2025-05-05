@@ -189,6 +189,7 @@ async def run_task(task: dict):
                 logging.info(f"의존성 데이터 {i+1} 구조: {list(dep_result.keys())}")
                 if "result" in dep_result and isinstance(dep_result["result"], dict):
                     logging.info(f"  - result 필드 구조: {list(dep_result['result'].keys())}")
+                logging.info(f"  - 역할: {dep_result.get('role', 'unknown')}")
             else:
                 logging.info(f"의존성 데이터 {i+1} 타입: {type(dep_result)}")
         
@@ -196,8 +197,15 @@ async def run_task(task: dict):
         code_content = ""
         code_explanation = ""
         
+        # 검색 결과 추출 및 활용
+        search_results = []
+        search_content = ""
+        
         for dep_result in depends_results:
             if dep_result and isinstance(dep_result, dict):
+                # 에이전트 역할 확인
+                dep_role = dep_result.get("role", "unknown")
+                
                 # 코드 생성 에이전트의 결과인 경우
                 if "code_files" in dep_result:
                     logging.info(f"코드 파일 발견: {list(dep_result['code_files'].keys())}")
@@ -208,8 +216,29 @@ async def run_task(task: dict):
                     logging.info(f"중첩된 구조에서 코드 파일 발견: {list(dep_result['result']['code_files'].keys())}")
                     for filename, code in dep_result["result"]["code_files"].items():
                         code_content += f"## {filename}\n```python\n{code}\n```\n\n"
-                elif "content" in dep_result:
-                    # 단순 텍스트 콘텐츠인 경우
+                
+                # 웹검색 결과 확인
+                if dep_role == "web_search":
+                    logging.info("웹검색 에이전트 결과 발견")
+                    
+                    # 직접 search_results 필드 확인
+                    if "search_results" in dep_result:
+                        search_results.extend(dep_result["search_results"])
+                        logging.info(f"직접 search_results 발견: {len(dep_result['search_results'])}개")
+                    
+                    # result 필드 내부의 raw_results 확인
+                    if "result" in dep_result and isinstance(dep_result["result"], dict):
+                        if "raw_results" in dep_result["result"]:
+                            search_results.extend(dep_result["result"]["raw_results"])
+                            logging.info(f"result.raw_results 발견: {len(dep_result['result']['raw_results'])}개")
+                        
+                        # 포맷된 콘텐츠 확인
+                        if "content" in dep_result["result"]:
+                            search_content = dep_result["result"]["content"]
+                            logging.info(f"검색 콘텐츠 발견: {len(search_content)} 문자")
+                
+                # 단순 텍스트 콘텐츠 처리
+                if "content" in dep_result:
                     logging.info("텍스트 콘텐츠 발견, 길이: " + str(len(dep_result["content"])))
                     code_content += dep_result["content"] + "\n\n"
                 elif "result" in dep_result and isinstance(dep_result["result"], dict) and "content" in dep_result["result"]:
@@ -217,8 +246,27 @@ async def run_task(task: dict):
                     logging.info("중첩된 텍스트 콘텐츠 발견, 길이: " + str(len(dep_result["result"]["content"])))
                     code_content += dep_result["result"]["content"] + "\n\n"
         
-        # 참조 텍스트가 있으면 프롬프트에 추가
-        reference_text = code_content if code_content else ""
+        # 검색 결과 및 코드 내용을 참조 텍스트로 결합
+        reference_text = ""
+        
+        # 검색 결과 텍스트 추가
+        if search_content:
+            reference_text += f"## 웹 검색 결과\n{search_content}\n\n"
+        elif search_results:
+            reference_text += "## 웹 검색 결과\n"
+            for idx, result in enumerate(search_results, 1):
+                title = result.get("title", "제목 없음")
+                snippet = result.get("snippet", "내용 없음")
+                url = result.get("url", "")
+                reference_text += f"### {idx}. {title}\n{snippet}\n"
+                if url:
+                    reference_text += f"[링크]({url})\n"
+                reference_text += "\n"
+        
+        # 코드 콘텐츠 추가
+        if code_content:
+            reference_text += f"## 코드 및 분석\n{code_content}\n\n"
+        
         if reference_text:
             logging.info(f"참조 텍스트가 프롬프트에 추가됨 (길이: {len(reference_text)})")
         
@@ -236,7 +284,7 @@ async def run_task(task: dict):
         # 프롬프트 내용 통합
         prompt = f"주제: {topic}\n\n"
         if reference_text:
-            prompt += f"참고 자료 및 코드:\n{reference_text}\n\n"
+            prompt += f"참고 자료:\n{reference_text}\n\n"
         prompt += "위 정보를 바탕으로 명확하고 구조화된 보고서를 작성해주세요."
         
         logging.info(f"최종 프롬프트 길이: {len(prompt)}")

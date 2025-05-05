@@ -185,6 +185,7 @@ class BrokerClient:
                 
                 # writer 태스크인 경우 code_generator의 결과를 직접 전달
                 if role == "writer":
+                    # 코드 생성기 결과 처리
                     for dep_result in depends_results:
                         if dep_result.get("role") == "code_generator":
                             if "result" in dep_result and isinstance(dep_result["result"], dict):
@@ -204,7 +205,32 @@ class BrokerClient:
                                     task_data["params"]["code_explanation"] = code_data.get("explanation", "")
                                     
                                     logger.info(f"writer 태스크에 코드 내용 추가됨: {list(code_files.keys())}")
-                                    break
+                    
+                    # 웹검색 결과 처리
+                    for dep_result in depends_results:
+                        if dep_result.get("role") == "web_search":
+                            logger.info("writer 태스크에 web_search 결과 추가 시도")
+                            
+                            if "result" in dep_result and isinstance(dep_result["result"], dict):
+                                search_data = dep_result["result"]
+                                
+                                # 파라미터 초기화
+                                if "params" not in task_data:
+                                    task_data["params"] = {}
+                                
+                                # 검색 결과 데이터 추가
+                                if "raw_results" in search_data:
+                                    task_data["params"]["search_results"] = search_data["raw_results"]
+                                    logger.info(f"writer 태스크에 검색 결과 추가됨: {len(search_data['raw_results'])}개")
+                                
+                                # 검색 콘텐츠 추가
+                                if "content" in search_data:
+                                    task_data["params"]["search_content"] = search_data["content"]
+                                    logger.info("writer 태스크에 검색 콘텐츠 추가됨")
+                    
+                    # 항상 의존성 결과 직접 전달
+                    task_data["depends_results"] = depends_results
+                    logger.info("의존성 결과를 writer 태스크에 직접 추가했습니다")
             
             # 요청 데이터 로깅
             logger.info(f"브로커 요청 데이터: {task_data}")
