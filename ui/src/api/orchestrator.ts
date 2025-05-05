@@ -99,6 +99,71 @@ export const orchestratorApi = {
         const response = await apiClient.get(`${BASE_URL}/health`);
         return response.data;
     },
+
+    // 태스크 분리 결과 조회 API
+    getTaskDecomposition: async (conversationId: string) => {
+        try {
+            // 이제 특별한 태스크 분리 API를 호출
+            const response = await apiClient.get(
+                `${BASE_URL}/conversations/${conversationId}/decomposition`
+            );
+            return response.data;
+        } catch (error) {
+            console.error("태스크 분리 결과 조회 오류:", error);
+            throw error;
+        }
+    },
+
+    // 진행 중인 에이전트 태스크 결과 조회 API
+    getAgentTasks: async (conversationId: string) => {
+        try {
+            // 이제 특별한 태스크 결과 API를 호출
+            const response = await apiClient.get(
+                `${BASE_URL}/conversations/${conversationId}/tasks`
+            );
+            return response.data;
+        } catch (error) {
+            console.error("에이전트 태스크 결과 조회 오류:", error);
+            throw error;
+        }
+    },
+
+    // 특정 에이전트 태스크 결과 조회 API
+    getAgentTaskResult: async (conversationId: string, taskId: string) => {
+        try {
+            // 태스크 결과 API를 호출하고, 특정 태스크만 필터링
+            const response = await apiClient.get(
+                `${BASE_URL}/conversations/${conversationId}/tasks`
+            );
+
+            // 요청한 taskId와 일치하는 태스크 찾기
+            const task = response.data.tasks?.find(
+                (t: { id: string }) => t.id === taskId
+            );
+
+            return {
+                conversation_id: response.data.conversation_id,
+                task: task || null,
+            };
+        } catch (error) {
+            console.error("에이전트 태스크 결과 조회 오류:", error);
+            throw error;
+        }
+    },
+
+    // 최종 통합 결과 조회 API
+    getFinalResult: async (conversationId: string) => {
+        try {
+            // 이제 특별한 최종 결과 API를 호출
+            const response = await apiClient.get(
+                `${BASE_URL}/conversations/${conversationId}/result`
+            );
+            return response.data;
+        } catch (error) {
+            console.error("최종 통합 결과 조회 오류:", error);
+            throw error;
+        }
+    },
 };
 
 // 고유한 대화 ID 생성 함수

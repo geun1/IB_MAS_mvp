@@ -66,19 +66,20 @@ class OrchestratorLLMClient:
             # LLM 호출 준비
             prompt = create_task_decomposition_prompt(user_query, available_roles, agents_detail)
             
-            logger.info(f"LLM 태스크 분해 프롬프트:\\n{prompt}") # 프롬프트 로깅 추가
+            logger.info(f"LLM 태스크 분해 프롬프트:\n{prompt}") # 프롬프트 로깅 추가
 
-            # 공통 클라이언트의 ask 메서드 사용 (내부적으로 재시도 및 폴백 처리)
-            response_content = await self.client.ask(
+            # fallback_models 인자를 별도로 처리하지 않고 기본 모델만 사용
+            # OpenAI API가 fallback_models 인자를 인식하지 못하는 문제 해결
+            # ask 대신 비동기 메서드인 aask 사용
+            response_content = await self.client.aask(
                 prompt=prompt,
                 model=self.model,
-                fallback_models=self.fallback_models,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
                 response_format={"type": "json_object"} # JSON 모드 요청
             )
             
-            logger.info(f"LLM 태스크 분해 응답 원문:\\n{response_content}") # 응답 원문 로깅 추가
+            logger.info(f"LLM 태스크 분해 응답 원문:\n{response_content}") # 응답 원문 로깅 추가
 
             # JSON 파싱 시도
             try:
@@ -155,25 +156,46 @@ class OrchestratorLLMClient:
             # 결과 통합 프롬프트 생성
             prompt = create_result_integration_prompt(original_query, tasks_results)
             
-            # LLM으로 결과 통합 요청
-            models_to_try = [self.model] + self.fallback_models
-            
-            for model in models_to_try:
-                try:
-                    logger.info(f"모델 시도 중: {model}")
-                    response = self.client.ask(prompt, model=model, temperature=self.temperature)
-                    logger.info(f"모델 {model} 성공!")
-                    
-                    # 결과를 딕셔너리 형식으로 반환
-                    return {
-                        "message": response,
-                        "status": "success"
-                    }
-                    
-                except Exception as e:
-                    logger.warning(f"모델 {model}로 결과 통합 실패: {str(e)}")
-                    if model == models_to_try[-1]:  # 마지막 모델
-                        raise
+            # OpenAI API 호환성 문제로 인해 fallback 모델 로직을 수동으로 구현
+            try:
+                logger.info(f"모델 시도 중: {self.model}")
+                # 비동기 메서드 aask 사용
+                response = await self.client.aask(
+                    prompt=prompt, 
+                    model=self.model, 
+                    temperature=self.temperature
+                )
+                logger.info(f"모델 {self.model} 성공!")
+                
+                # 결과를 딕셔너리 형식으로 반환
+                return {
+                    "message": response,
+                    "status": "success"
+                }
+            except Exception as primary_error:
+                logger.warning(f"주 모델 {self.model}로 결과 통합 실패: {str(primary_error)}")
+                
+                # 폴백 모델 순차적으로 시도
+                for fallback_model in self.fallback_models:
+                    try:
+                        logger.info(f"폴백 모델 시도 중: {fallback_model}")
+                        # 비동기 메서드 aask 사용
+                        response = await self.client.aask(
+                            prompt=prompt, 
+                            model=fallback_model, 
+                            temperature=self.temperature
+                        )
+                        logger.info(f"폴백 모델 {fallback_model} 성공!")
+                        
+                        return {
+                            "message": response,
+                            "status": "success"
+                        }
+                    except Exception as fallback_error:
+                        logger.warning(f"폴백 모델 {fallback_model}로 결과 통합 실패: {str(fallback_error)}")
+                
+                # 모든 모델이 실패한 경우
+                raise Exception(f"모든 모델 시도 실패. 원본 오류: {str(primary_error)}")
                 
         except Exception as e:
             logger.error(f"결과 통합 중 오류 발생: {str(e)}")
@@ -189,7 +211,11 @@ class OrchestratorLLMClient:
             for model in models:
                 try:
                     start_time = __import__('time').time()
-                    response = self.client.ask("Hello, testing connection", model=model)
+                    # 비동기 메서드 aask 사용
+                    response = await self.client.aask(
+                        "Hello, testing connection", 
+                        model=model
+                    )
                     end_time = __import__('time').time()
                     
                     results[model] = {
@@ -203,9 +229,10 @@ class OrchestratorLLMClient:
                         "status": "error",
                         "error": str(e)
                     }
-                    logger.error(f"모델 {model} 연결 실패: {str(e)}")
+                    logger.warning(f"모델 {model} 연결 실패: {str(e)}")
             
             return results
+            
         except Exception as e:
-            logger.error(f"LLM API 연결 테스트 실패: {str(e)}")
+            logger.error(f"연결 테스트 중 오류 발생: {str(e)}")
             return {"status": "error", "error": str(e)} 

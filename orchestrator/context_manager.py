@@ -79,7 +79,11 @@ class ContextManager:
                 
             # 응답 저장
             conversation["result"] = response
-            
+
+            # 쿼리가 있으면 저장
+            if isinstance(response, dict) and "query" in response:
+                conversation["query"] = response["query"]
+                
             # 대화 관련 태스크 ID 목록도 저장 (있는 경우)
             if isinstance(response, dict) and "tasks" in response:
                 conversation["tasks"] = response["tasks"]
@@ -99,6 +103,14 @@ class ContextManager:
             # 최종 메시지 저장 (있는 경우)
             if isinstance(response, dict) and "message" in response:
                 conversation["message"] = response["message"]
+                
+            # 생성 시간과 업데이트 시간 저장
+            if isinstance(response, dict) and "created_at" in response:
+                conversation["created_at"] = response["created_at"]
+            if isinstance(response, dict) and "updated_at" in response:
+                conversation["updated_at"] = response["updated_at"]
+            else:
+                conversation["updated_at"] = time.time()
             
             # 저장
             key = f"conversation:{conversation_id}"

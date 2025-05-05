@@ -43,6 +43,25 @@ interface ConversationUnit {
     };
 }
 
+// 폴링 상태 관리 인터페이스
+interface PollingState {
+    decompositionPolling: boolean;
+    taskResultPolling: boolean;
+    finalResultPolling: boolean;
+}
+
+// 개별 태스크 타입을 정의
+interface TaskItem {
+    id: string;
+    status: string;
+    role: string;
+    description?: string;
+    result?: any;
+    index?: number;
+    completed_at?: number;
+    created_at?: number;
+}
+
 // 마크다운 테이블을 HTML로 변환
 const convertMarkdownTablesToHtml = (content: string): string => {
     if (!content) return content;
@@ -257,14 +276,28 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
     ); // 완료된 대화 단위들
     const [conversationId, setConversationId] = useState<string | null>(null);
     const [waitingForResponse, setWaitingForResponse] = useState(false);
-    const [conversationStatus, setConversationStatus] =
-        useState<ConversationStatus | null>(null);
-    const [pollingStopped, setPollingStopped] = useState(false); // 폴링 중단 상태 추가
+
+    // 각 단계별 폴링 상태
+    const [pollingState, setPollingState] = useState<PollingState>({
+        decompositionPolling: false,
+        taskResultPolling: false,
+        finalResultPolling: false,
+    });
+
+    // 태스크 분리 결과 저장
+    const [taskDecomposition, setTaskDecomposition] = useState<{
+        conversation_id?: string;
+        tasks: TaskDecompositionItem[];
+    } | null>(null);
+    // 태스크 ID 목록
+    const [taskIds, setTaskIds] = useState<string[]>([]);
+    // 완료된 태스크 ID 목록
+    const [completedTaskIds, setCompletedTaskIds] = useState<Set<string>>(
+        new Set()
+    );
 
     const queryClient = useQueryClient();
     const scrollRef = useRef<HTMLDivElement>(null);
-    const additionalPollsCount = useRef(0);
-    const maxAdditionalPolls = 2; // 완료 후 추가 폴링 횟수 2로 유지
 
     // useMutation 정의 (타입 명시)
     const queryMutation = useMutation<QueryResponse, Error, QueryRequest>(
@@ -274,9 +307,6 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                 console.log("쿼리 요청 성공:", data);
                 if (data.conversation_id) {
                     setConversationId(data.conversation_id);
-                    setWaitingForResponse(true);
-                    setPollingStopped(false); // 폴링 중단 상태 초기화
-                    additionalPollsCount.current = 0;
                 } else {
                     setWaitingForResponse(false);
                 }
@@ -284,210 +314,383 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
             onError: (error) => {
                 console.error("쿼리 요청 실패:", error);
                 setWaitingForResponse(false);
+                // 폴링 중지
+                setPollingState({
+                    decompositionPolling: false,
+                    taskResultPolling: false,
+                    finalResultPolling: false,
+                });
             },
         }
     );
 
-    // 대화 상태 폴링 로직 (타입 명시 및 인수 구조 확인)
-    const { data: conversationData } = useQuery<
-        ConversationStatus | null,
-        Error
-    >(
-        // 인수 1: 쿼리 키
-        ["conversationStatus", conversationId],
-        // 인수 2: 쿼리 함수
+    // 태스크 분리 결과 폴링 쿼리
+    const { data: decompositionData, refetch: refetchDecomposition } = useQuery(
+        ["taskDecomposition", conversationId],
         async () => {
-            if (!conversationId) return null;
-            try {
-                const response = await orchestratorApi.getConversation(
-                    conversationId
-                );
-                return response;
-            } catch (error) {
-                console.error("대화 상태 조회 오류:", error);
-                return null;
-            }
+            if (!conversationId) throw new Error("대화 ID가 없습니다");
+
+            console.log(`[태스크 분리] 폴링 시도: ${conversationId}`);
+
+            // 분리된 태스크 분리 API 호출
+            const response = await orchestratorApi.getTaskDecomposition(
+                conversationId
+            );
+
+            console.log("[태스크 분리] 응답:", response);
+            return response;
         },
-        // 인수 3: 옵션 객체
         {
-            enabled: waitingForResponse && !!conversationId && !pollingStopped,
-            refetchInterval: 3000,
-            staleTime: 2000,
+            // conversationId가 있고 decompositionPolling이 true일 때만 활성화
+            enabled: !!conversationId && pollingState.decompositionPolling,
+            refetchInterval: 1000, // 1초마다 폴링
+            // 성공한 경우에도 refetch 계속 수행
+            refetchOnWindowFocus: false,
+            retry: true,
+            retryDelay: 1000,
             onSuccess: (data) => {
-                if (!data) return;
+                if (!data || !data.tasks || data.tasks.length === 0) {
+                    console.log("[태스크 분리] 결과 없음, 폴링 계속...");
+                    return;
+                }
 
-                // 항상 상태 업데이트 (폴링 중단 여부와 상관없이)
-                setConversationStatus(data);
-                console.log("대화 상태 업데이트:", data);
+                console.log("[태스크 분리] 성공:", data);
 
-                // 현재 대화 단위 업데이트
-                updateCurrentConversationUnit(data);
+                // 태스크 분리 결과 저장
+                setTaskDecomposition(data);
 
-                // 폴링 중지 로직
-                if (
-                    data.status === "completed" ||
-                    data.status === "partially_completed"
-                ) {
-                    if (additionalPollsCount.current < maxAdditionalPolls) {
-                        additionalPollsCount.current++;
+                // 태스크 ID 목록 추출 - index를 ID로 사용
+                const ids = data.tasks.map(
+                    (task: TaskDecompositionItem, index: number) =>
+                        task.index?.toString() || index.toString()
+                );
+                console.log("[태스크 분리] 태스크 ID 목록:", ids);
+                setTaskIds(ids);
+
+                // 태스크 분리 결과 즉시 렌더링
+                updateTaskDecomposition(data);
+
+                // *** 중요: 태스크 분리 폴링 즉시 중단하고 태스크 결과 폴링 시작 ***
+                console.log(
+                    "[시퀀스] 태스크 분리 완료, 에이전트 태스크 결과 폴링 시작"
+                );
+                setPollingState({
+                    decompositionPolling: false, // 태스크 분리 폴링 중단
+                    taskResultPolling: true, // 태스크 결과 폴링 시작
+                    finalResultPolling: false,
+                });
+            },
+            onError: (error) => {
+                console.error("[태스크 분리] 조회 오류:", error);
+            },
+        }
+    );
+
+    // 에이전트 태스크 결과 폴링 쿼리
+    const { data: taskResultsData, refetch: refetchTaskResults } = useQuery(
+        ["taskResults", conversationId],
+        async () => {
+            if (!conversationId) throw new Error("대화 ID가 없습니다");
+
+            console.log(`[에이전트 결과] 폴링 시도: ${conversationId}`);
+
+            // 분리된 태스크 결과 API 호출
+            const response = await orchestratorApi.getAgentTasks(
+                conversationId
+            );
+
+            console.log("[에이전트 결과] 응답:", response);
+            return response;
+        },
+        {
+            // conversationId가 있고 taskResultPolling이 true일 때만 활성화
+            enabled: !!conversationId && pollingState.taskResultPolling,
+            refetchInterval: 1000, // 1초마다 폴링
+            refetchOnWindowFocus: false,
+            retry: true,
+            retryDelay: 1000,
+            onSuccess: (data) => {
+                if (!data || !data.tasks || data.tasks.length === 0) {
+                    console.log("[에이전트 결과] 결과 없음, 폴링 계속...");
+                    return;
+                }
+
+                console.log("[에이전트 결과] 데이터:", data);
+                console.log(
+                    "[에이전트 결과] 현재 완료된 태스크:",
+                    Array.from(completedTaskIds)
+                );
+
+                // 완료된 태스크 추적
+                const newCompletedTasks = new Set(completedTaskIds);
+                let hasNewCompletedTask = false;
+
+                // 모든 태스크를 화면에 표시하고 완료된 태스크 추적
+                data.tasks.forEach((task: TaskItem) => {
+                    // 태스크 ID 확인 - id가 없는 경우 index를 사용
+                    const taskId = task.id || task.index?.toString() || "";
+                    console.log(
+                        `[에이전트 결과] 태스크 확인: ID=${taskId}, 상태=${task.status}, 역할=${task.role}`
+                    );
+
+                    // 완료된 태스크이고 아직 처리되지 않은 경우
+                    if (
+                        task.status === "completed" &&
+                        taskId &&
+                        !completedTaskIds.has(taskId)
+                    ) {
                         console.log(
-                            `완료 후 추가 폴링 (${additionalPollsCount.current}/${maxAdditionalPolls})`
+                            `[에이전트 결과] 새 완료 태스크 발견: ${taskId}`
                         );
-                    } else {
-                        console.log("모든 폴링 완료, 폴링 중단");
-                        setPollingStopped(true); // 폴링 중단 상태로 설정
-
-                        // 현재 대화 단위를 완료된 대화 단위로 이동
-                        if (
-                            currentConversationUnit &&
-                            currentConversationUnit.systemResponses
-                                .finalResponse
-                        ) {
-                            setCompletedUnits((prev) => [
-                                ...prev,
-                                currentConversationUnit,
-                            ]);
-                            setCurrentConversationUnit(null);
-                        }
-
-                        setWaitingForResponse(false); // 응답 대기 상태 해제
+                        newCompletedTasks.add(taskId);
+                        hasNewCompletedTask = true;
                     }
+
+                    // 상태와 관계없이 모든 태스크 결과 표시 (업데이트)
+                    updateTaskResult(task);
+                });
+
+                // 새로 완료된 태스크가 있으면 상태 업데이트
+                if (hasNewCompletedTask) {
+                    console.log(
+                        "[에이전트 결과] 완료된 태스크 업데이트:",
+                        Array.from(newCompletedTasks)
+                    );
+                    setCompletedTaskIds(newCompletedTasks);
+                }
+
+                // 모든 태스크가 완료되었는지 확인 (두 가지 조건 확인)
+                const allTasksCompleted =
+                    // 1. taskIds 유효성 확인
+                    taskIds.length > 0 &&
+                    // 2. 완료된 태스크 개수가 전체 태스크 개수와 같거나 큰 경우
+                    (newCompletedTasks.size >= taskIds.length ||
+                        // 3. 서버에서 받은 태스크 개수가 전체 태스크 개수와 같거나 크고, 모두 완료 상태인 경우
+                        (data.tasks.length >= taskIds.length &&
+                            data.tasks.every(
+                                (task: TaskItem) => task.status === "completed"
+                            )));
+
+                console.log(
+                    `[에이전트 결과] 태스크 진행 상황: ${
+                        Array.from(newCompletedTasks).length
+                    }/${
+                        taskIds.length
+                    } 완료, 모두 완료됨: ${allTasksCompleted}, 서버 태스크 개수: ${
+                        data.tasks.length
+                    }`
+                );
+
+                // 모든 태스크가 완료되면 태스크 결과 폴링 중단하고 최종 결과 폴링 시작
+                if (allTasksCompleted) {
+                    console.log(
+                        "[시퀀스] 모든 태스크 완료, 최종 결과 폴링 시작"
+                    );
+                    setPollingState({
+                        decompositionPolling: false,
+                        taskResultPolling: false, // 태스크 결과 폴링 중단
+                        finalResultPolling: true, // 최종 결과 폴링 시작
+                    });
                 }
             },
+            onError: (error) => {
+                console.error("[에이전트 결과] 조회 오류:", error);
+            },
         }
     );
 
-    // 현재 대화 단위 업데이트 함수
-    const updateCurrentConversationUnit = (data: ConversationStatus) => {
-        setCurrentConversationUnit((prev) => {
-            if (!prev && userMessages.length === 0) return null;
+    // 최종 통합 결과 폴링 쿼리
+    const { data: finalResultData, refetch: refetchFinalResult } = useQuery(
+        ["finalResult", conversationId],
+        async () => {
+            if (!conversationId) throw new Error("대화 ID가 없습니다");
 
-            // 새 대화 단위 초기화
-            const updatedUnit: ConversationUnit = prev || {
+            console.log(`[최종 결과] 폴링 시도: ${conversationId}`);
+
+            // 분리된 최종 결과 API 호출
+            const response = await orchestratorApi.getFinalResult(
+                conversationId
+            );
+
+            console.log("[최종 결과] 응답:", response);
+            return response;
+        },
+        {
+            // conversationId가 있고 finalResultPolling이 true일 때만 활성화
+            enabled: !!conversationId && pollingState.finalResultPolling,
+            refetchInterval: 1000, // 1초마다 폴링
+            refetchOnWindowFocus: false,
+            retry: true,
+            retryDelay: 1000,
+            onSuccess: (data) => {
+                if (!data || !data.message) {
+                    console.log("[최종 결과] 메시지 없음, 폴링 계속...");
+                    return;
+                }
+
+                console.log("[최종 결과] 성공:", data);
+
+                // 최종 결과가 있으면 즉시 렌더링하고 모든 폴링 중단
+                if (data.message) {
+                    // 최종 결과 즉시 렌더링
+                    updateFinalResult(data);
+
+                    // 모든 폴링 중단
+                    console.log("[시퀀스] 최종 결과 완료, 모든 폴링 종료");
+                    setPollingState({
+                        decompositionPolling: false,
+                        taskResultPolling: false,
+                        finalResultPolling: false, // 최종 결과 폴링 중단
+                    });
+
+                    // 응답 대기 상태 해제
+                    setWaitingForResponse(false);
+
+                    // 현재 대화 단위를 완료된 대화 단위로 이동
+                    setCurrentConversationUnit((prev) => {
+                        if (prev) {
+                            setCompletedUnits((units) => [...units, prev]);
+                            return null;
+                        }
+                        return prev;
+                    });
+                }
+            },
+            onError: (error) => {
+                console.error("[최종 결과] 조회 오류:", error);
+            },
+        }
+    );
+
+    // useEffect를 사용하여 폴링 상태 변경 시 적절한 refetch 트리거
+    useEffect(() => {
+        // conversationId가 없으면 아무 작업도 수행하지 않음
+        if (!conversationId) return;
+
+        if (pollingState.decompositionPolling && refetchDecomposition) {
+            // 태스크 분리 결과 폴링 시작
+            refetchDecomposition();
+        } else if (pollingState.taskResultPolling && refetchTaskResults) {
+            // 에이전트 태스크 결과 폴링 시작
+            refetchTaskResults();
+        } else if (pollingState.finalResultPolling && refetchFinalResult) {
+            // 최종 결과 폴링 시작
+            refetchFinalResult();
+        }
+    }, [
+        conversationId,
+        pollingState.decompositionPolling,
+        pollingState.taskResultPolling,
+        pollingState.finalResultPolling,
+        refetchDecomposition,
+        refetchTaskResults,
+        refetchFinalResult,
+    ]);
+
+    // 태스크 분리 결과 업데이트 함수
+    const updateTaskDecomposition = (data: {
+        tasks: TaskDecompositionItem[];
+    }) => {
+        if (!data || !data.tasks || data.tasks.length === 0) return;
+
+        setCurrentConversationUnit((prev) => {
+            const updatedUnit = prev || {
                 userMessage: userMessages[userMessages.length - 1],
                 systemResponses: {
                     taskResults: [],
                 },
             };
 
-            // 태스크 분할 결과 업데이트
-            if (
-                data.taskDecomposition &&
-                !updatedUnit.systemResponses.taskDecomposition
-            ) {
-                updatedUnit.systemResponses.taskDecomposition =
-                    renderTaskDecomposition(data.taskDecomposition);
-            }
+            // 태스크 분할 내용 렌더링
+            updatedUnit.systemResponses.taskDecomposition =
+                renderTaskDecomposition(data);
 
-            // 태스크 결과 업데이트
-            if (data.tasks && data.tasks.length > 0) {
-                const taskElements = data.tasks.map((task, index) => {
-                    const taskTimestamp = task.completed_at
-                        ? new Date(task.completed_at * 1000)
-                        : task.created_at
-                        ? new Date(task.created_at * 1000)
-                        : new Date();
+            return updatedUnit;
+        });
+    };
 
-                    // 결과 내용 처리 - 객체일 경우 마크다운 코드 블록으로 변환
-                    let resultContent = "";
-                    if (task.status === "completed") {
-                        if (typeof task.result === "object") {
-                            try {
-                                resultContent = `\`\`\`json\n${JSON.stringify(
-                                    task.result,
-                                    null,
-                                    2
-                                )}\n\`\`\``;
-                            } catch (e) {
-                                resultContent = "결과를 표시할 수 없습니다.";
-                            }
-                        } else if (task.result) {
-                            resultContent = String(task.result);
-                        } else {
-                            resultContent = "결과 없음";
-                        }
-                    } else {
-                        resultContent = `${
-                            task.description || "작업"
-                        } 처리 중...`;
+    // 개별 태스크 결과 업데이트 함수
+    const updateTaskResult = (task: TaskItem) => {
+        if (!task) return;
+
+        // 태스크에 role이 없는 경우 처리하지 않음
+        if (!task.role) return;
+
+        // taskId를 id 또는 index 값에서 가져옴
+        const taskId =
+            task.id ||
+            task.index?.toString() ||
+            Math.random().toString(36).substring(7);
+
+        setCurrentConversationUnit((prev) => {
+            if (!prev) return null;
+
+            const updatedUnit = { ...prev };
+
+            // 태스크 결과 요소 생성
+            const taskElement = (
+                <ProcessMessage
+                    key={`ta***REMOVED***${taskId}`}
+                    type="agent_result"
+                    role={task.role}
+                    content={
+                        typeof task.result === "object"
+                            ? JSON.stringify(task.result, null, 2)
+                            : String(task.result || "결과 없음")
                     }
+                    timestamp={
+                        task.completed_at
+                            ? new Date(task.completed_at * 1000)
+                            : new Date()
+                    }
+                    taskDescription={task.description}
+                    taskIndex={task.index}
+                    status={task.status}
+                />
+            );
 
-                    return (
-                        <ProcessMessage
-                            key={`ta***REMOVED***${task.id || index}`}
-                            type={
-                                task.status === "completed"
-                                    ? "agent_result"
-                                    : "agent_processing"
-                            }
-                            role={task.role}
-                            content={resultContent}
-                            timestamp={taskTimestamp}
-                            taskDescription={task.description}
-                            taskIndex={index}
-                        />
-                    );
+            // 같은 role을 가진 결과가 이미 있는지 확인
+            const existingRoleIndex =
+                updatedUnit.systemResponses.taskResults.findIndex((element) => {
+                    // React 요소의 props에 접근
+                    const props = (element as any).props;
+                    return props && props.role === task.role;
                 });
 
-                // 완료된 태스크만 필터링하여 처리 중 상태는 최신 것으로 유지
-                const existingTaskIds = new Set(
-                    updatedUnit.systemResponses.taskResults.map(
-                        (element) => element.key?.toString() || ""
-                    )
-                );
-
-                const newTaskElements = taskElements.filter((element) => {
-                    const elementKey = element.key?.toString() || "";
-                    return (
-                        !existingTaskIds.has(elementKey) ||
-                        element.props.type === "agent_processing"
-                    );
-                });
-
-                updatedUnit.systemResponses.taskResults = [
-                    ...updatedUnit.systemResponses.taskResults.filter(
-                        (element) => {
-                            const elementKey = element.key?.toString() || "";
-                            const isProcessing =
-                                element.props.type === "agent_processing";
-                            return (
-                                !isProcessing ||
-                                !newTaskElements.some(
-                                    (newElement) =>
-                                        newElement.key?.toString() ===
-                                        elementKey
-                                )
-                            );
-                        }
-                    ),
-                    ...newTaskElements,
-                ];
-            }
-
-            // 최종 응답 업데이트
-            if (
-                (data.status === "completed" ||
-                    data.status === "partially_completed") &&
-                data.message &&
-                !updatedUnit.systemResponses.finalResponse
-            ) {
-                updatedUnit.systemResponses.finalResponse = {
-                    role: "assistant",
-                    content: data.message,
-                    timestamp: new Date(),
-                    conversationId: data.conversation_id,
-                    finalResult: true,
-                };
+            // 같은 role의 태스크가 있으면 업데이트, 없으면 추가
+            if (existingRoleIndex >= 0) {
+                // 기존에 있던 결과 제거하고 새 결과로 대체
+                updatedUnit.systemResponses.taskResults[existingRoleIndex] =
+                    taskElement;
+            } else {
+                // 새 역할의 태스크 결과 추가
+                updatedUnit.systemResponses.taskResults.push(taskElement);
             }
 
             return updatedUnit;
         });
     };
 
-    const resetStatusPolling = () => {
-        additionalPollsCount.current = 0;
-        setConversationStatus(null);
-        setPollingStopped(false); // 폴링 중단 상태 초기화
+    // 최종 결과 업데이트 함수
+    const updateFinalResult = (data: any) => {
+        if (!data || !data.message) return;
+
+        setCurrentConversationUnit((prev) => {
+            if (!prev) return null;
+
+            const updatedUnit = { ...prev };
+
+            // 최종 응답 설정
+            updatedUnit.systemResponses.finalResponse = {
+                role: "assistant",
+                content: data.message,
+                timestamp: new Date(),
+                conversationId: data.conversation_id,
+                finalResult: true,
+            };
+
+            return updatedUnit;
+        });
     };
 
     const handleSubmit = (e: React.FormEvent) => {
@@ -522,11 +725,24 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
             conversation_id: currentConvId,
         };
 
+        // 쿼리 요청 즉시 처리 중 상태로 설정
+        setWaitingForResponse(true);
+
+        // 즉시 태스크 분리 폴링 시작 - 다른 폴링은 비활성화
+        console.log("[시퀀스] 태스크 분리 폴링 시작");
+        setPollingState({
+            decompositionPolling: true,
+            taskResultPolling: false,
+            finalResultPolling: false,
+        });
+
+        // 완료된 태스크 초기화
+        setCompletedTaskIds(new Set());
+        setTaskIds([]);
+
         queryMutation.mutate(request);
 
         setQuery("");
-        setWaitingForResponse(true);
-        resetStatusPolling();
         eventEmitter.emit("querySubmitted", {});
     };
 
