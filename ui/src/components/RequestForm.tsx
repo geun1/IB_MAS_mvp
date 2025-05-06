@@ -456,6 +456,18 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
 
                 console.log(`[태스크 분리] 응답:`, response);
 
+                // 응답에서 메시지 ID 확인 - 추가 검증
+                if (
+                    response.message_id &&
+                    response.message_id !== currentMessageId
+                ) {
+                    console.warn(
+                        `[태스크 분리] 응답 메시지 ID(${response.message_id})가 요청 메시지 ID(${currentMessageId})와 다릅니다.`
+                    );
+                    // 응답을 재구성하고 현재 메시지 ID 강제 설정
+                    response.message_id = currentMessageId;
+                }
+
                 // 에러 응답 체크
                 if (response.error) {
                     console.error(`[태스크 분리] 에러 응답: ${response.error}`);
@@ -536,6 +548,26 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
 
                 console.log(`[에이전트 결과] 응답:`, response);
 
+                // 응답에서 메시지 ID 확인 - 추가 검증
+                if (
+                    response.message_id &&
+                    response.message_id !== currentMessageId
+                ) {
+                    console.warn(
+                        `[에이전트 결과] 응답 메시지 ID(${response.message_id})가 요청 메시지 ID(${currentMessageId})와 다릅니다.`
+                    );
+                    // 응답을 재구성하고 현재 메시지 ID 강제 설정
+                    response.message_id = currentMessageId;
+
+                    // 에이전트 태스크에 메시지 ID 설정
+                    if (response.tasks && Array.isArray(response.tasks)) {
+                        response.tasks = response.tasks.map((task: any) => ({
+                            ...task,
+                            message_id: currentMessageId,
+                        }));
+                    }
+                }
+
                 // 에러 응답 체크
                 if (response.error) {
                     console.error(
@@ -613,6 +645,18 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                 );
 
                 console.log(`[최종 결과] 응답:`, response);
+
+                // 응답에서 메시지 ID 확인 - 추가 검증
+                if (
+                    response.message_id &&
+                    response.message_id !== currentMessageId
+                ) {
+                    console.warn(
+                        `[최종 결과] 응답 메시지 ID(${response.message_id})가 요청 메시지 ID(${currentMessageId})와 다릅니다.`
+                    );
+                    // 응답을 재구성하고 현재 메시지 ID 강제 설정
+                    response.message_id = currentMessageId;
+                }
 
                 // 에러 응답 체크
                 if (response.error) {
@@ -975,29 +1019,24 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
     // 태스크 처리 상태 초기화 함수 추가
     const resetProcessingState = () => {
         console.log("[상태 초기화] 태스크 처리 상태 초기화");
+        // 태스크 분해 관련 상태 초기화
         setTaskDecomposition(null);
         setCompletedTaskIds(new Set());
         setTaskIds([]);
         setExpectedAgentTasks(0);
 
-        // React Query 캐시 초기화
-        if (conversationId && currentMessageId) {
-            queryClient.removeQueries([
-                "taskDecomposition",
-                conversationId,
-                currentMessageId,
-            ]);
-            queryClient.removeQueries([
-                "agentTasks",
-                conversationId,
-                currentMessageId,
-            ]);
-            queryClient.removeQueries([
-                "finalResult",
-                conversationId,
-                currentMessageId,
-            ]);
-        }
+        // React Query 캐시 전체 초기화 (주의: conversation 관련 캐시는 유지)
+        queryClient.removeQueries({
+            predicate: (query) => {
+                // query.queryKey를 문자열 배열로 캐스팅
+                const key = query.queryKey as string[];
+                // conversation 관련 쿼리만 유지하고 나머지 제거
+                return (
+                    key[0] !== "conversations" &&
+                    !key[0].startsWith("conversation_details")
+                );
+            },
+        });
     };
 
     // 개별 태스크 결과 업데이트 함수
@@ -1514,6 +1553,14 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
         if (!query.trim() || queryMutation.isLoading || waitingForResponse)
             return;
 
+        // 이전 처리 상태 완전히 초기화
+        resetProcessingState();
+
+        // 이전 대화가 있으면 완료된 대화로 이동
+        if (currentConversationUnit) {
+            setCompletedUnits((prev) => [...prev, currentConversationUnit]);
+        }
+
         // 대화 ID가 없으면 생성, 있으면 유지 (새로운 메시지만 생성)
         const currentConvId = conversationId || generateConversationId();
         if (!conversationId) {
@@ -1536,14 +1583,6 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
             conversationId: currentConvId,
             id: newMessageId, // 메시지 ID 추가
         };
-
-        // 이전 대화가 있으면 완료된 대화로 이동
-        if (currentConversationUnit) {
-            setCompletedUnits((prev) => [...prev, currentConversationUnit]);
-        }
-
-        // 이전 처리 상태 초기화
-        resetProcessingState();
 
         // 새 사용자 메시지 저장
         setMessages((prev) => [...prev, userMessage]);
