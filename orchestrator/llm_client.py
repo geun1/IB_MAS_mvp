@@ -50,7 +50,28 @@ class OrchestratorLLMClient:
         self.max_tokens = LLM_MAX_TOKENS
         logger.info(f"LLM 클라이언트 초기화 완료 (기본 모델: {self.model})")
     
-    async def decompose_tasks(self, user_query: str, available_roles: str, agents_detail: str = None) -> Dict[str, Any]:
+    def _format_conversation_context(self, messages: List[Dict[str, Any]]) -> str:
+        """
+        대화 메시지 목록을 컨텍스트 문자열로 변환
+        
+        Args:
+            messages: 대화 메시지 목록
+            
+        Returns:
+            포맷팅된 대화 컨텍스트 문자열
+        """
+        if not messages:
+            return ""
+            
+        context = []
+        for msg in messages:
+            if "request" in msg and "response" in msg:
+                context.append(f"사용자: {msg['request']}")
+                context.append(f"시스템: {msg['response']}")
+                
+        return "\n".join(context)
+    
+    async def decompose_tasks(self, user_query: str, available_roles: str, agents_detail: str = None, conversation_context: List[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         사용자 요청을 여러 태스크로 분해
         
@@ -58,13 +79,22 @@ class OrchestratorLLMClient:
             user_query: 사용자 질의
             available_roles: 사용 가능한 에이전트 역할 정보
             agents_detail: 에이전트 상세 정보 (선택적)
+            conversation_context: 이전 대화 컨텍스트 (선택적)
             
         Returns:
             분해된 태스크 정보
         """
         try:
+            # 대화 컨텍스트 포맷팅
+            formatted_context = self._format_conversation_context(conversation_context) if conversation_context else None
+            
             # LLM 호출 준비
-            prompt = create_task_decomposition_prompt(user_query, available_roles, agents_detail)
+            prompt = create_task_decomposition_prompt(
+                user_query=user_query,
+                available_roles=available_roles,
+                agents_detail=agents_detail,
+                conversation_context=formatted_context
+            )
             
             logger.info(f"LLM 태스크 분해 프롬프트:\n{prompt}") # 프롬프트 로깅 추가
 

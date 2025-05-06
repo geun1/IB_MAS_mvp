@@ -64,7 +64,7 @@ class TaskDecomposer:
             
         return agent_info
     
-    async def decompose_query(self, query: str, conversation_id: str = None, user_id: str = None, disabled_agents: Optional[List[str]] = None) -> Tuple[List[Dict[str, Any]], List[List[int]], List[List[str]]]:
+    async def decompose_query(self, query: str, conversation_id: str = None, user_id: str = None, disabled_agents: Optional[List[str]] = None, conversation_context: Optional[List[Dict[str, Any]]] = None) -> Tuple[List[Dict[str, Any]], List[List[int]], List[List[str]]]:
         """
         쿼리를 태스크로 분해
         
@@ -73,6 +73,7 @@ class TaskDecomposer:
             conversation_id: 대화 ID
             user_id: 사용자 ID
             disabled_agents: 비활성화된 에이전트 역할 목록
+            conversation_context: 이전 대화 컨텍스트
             
         Returns:
             태스크 목록, 실행 레벨별 태스크 인덱스 목록, 실행 레벨별 자연어 태스크 설명 목록의 튜플
@@ -116,7 +117,8 @@ class TaskDecomposer:
         decomposition_result = await self.llm_client.decompose_tasks(
             query, 
             detailed_roles_description,
-            agents_detail=agents_detail
+            agents_detail=agents_detail,
+            conversation_context=conversation_context
         )
 
         # 태스크 목록 추출

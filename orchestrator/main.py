@@ -162,11 +162,16 @@ async def process_query(request: QueryRequest):
         
         # 태스크 분해
         task_decomposer = TaskDecomposer(app.state.registry_client, app.state.llm_client)
+        
+        # 이전 대화 컨텍스트 가져오기
+        conversation_messages = await app.state.context_manager.get_conversation_messages(conversation_id)
+        
         tasks, execution_levels, natural_language_tasks = await task_decomposer.decompose_query(
             query=request.query,
             conversation_id=conversation_id,
             user_id=user_id,
-            disabled_agents=request.disabled_agents
+            disabled_agents=request.disabled_agents,
+            conversation_context=conversation_messages
         )
         
         # 태스크 저장
