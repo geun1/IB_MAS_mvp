@@ -54,6 +54,7 @@ async def register_agent():
             "description": AGENT_DESCRIPTION,
             "endpoint": service_endpoint,  # 엔드포인트 추가
             "type": "function",
+            "requires_context": True,  # context가 필요함을 명시
             "params": [
                 {
                     "name": "topic",
@@ -165,112 +166,11 @@ async def run_task(task: dict):
         task_id = task.get("task_id", "unknown")
         logging.info(f"태스크 수신: {task_id}")
         
-        # 전체 태스크 구조 상세 로깅
-        logging.debug(f"태스크 전체 구조: {json.dumps(task, indent=2)}")
-        
         # 태스크 데이터 추출
         params = task.get("params", {})
         topic = params.get("topic", "")
         
-        # 의존성 결과 처리 - 더 상세한 로깅
-        depends_results = task.get("depends_results", [])
-        if "context" in task and isinstance(task["context"], dict):
-            # context 필드를 통해 전달된 경우
-            context_depends = task["context"].get("depends_results", [])
-            if context_depends:
-                logging.info(f"컨텍스트를 통해 의존성 데이터 수신: {len(context_depends)}개")
-                depends_results = context_depends
-        
-        logging.info(f"의존성 데이터 수신: {len(depends_results)}개의 의존 태스크 결과")
-        
-        # 의존성 데이터 상세 로깅
-        for i, dep_result in enumerate(depends_results):
-            if isinstance(dep_result, dict):
-                logging.info(f"의존성 데이터 {i+1} 구조: {list(dep_result.keys())}")
-                if "result" in dep_result and isinstance(dep_result["result"], dict):
-                    logging.info(f"  - result 필드 구조: {list(dep_result['result'].keys())}")
-                logging.info(f"  - 역할: {dep_result.get('role', 'unknown')}")
-            else:
-                logging.info(f"의존성 데이터 {i+1} 타입: {type(dep_result)}")
-        
-        # 코드 생성 결과 추출 및 활용
-        code_content = ""
-        code_explanation = ""
-        
-        # 검색 결과 추출 및 활용
-        search_results = []
-        search_content = ""
-        
-        for dep_result in depends_results:
-            if dep_result and isinstance(dep_result, dict):
-                # 에이전트 역할 확인
-                dep_role = dep_result.get("role", "unknown")
-                
-                # 코드 생성 에이전트의 결과인 경우
-                if "code_files" in dep_result:
-                    logging.info(f"코드 파일 발견: {list(dep_result['code_files'].keys())}")
-                    for filename, code in dep_result["code_files"].items():
-                        code_content += f"## {filename}\n```python\n{code}\n```\n\n"
-                elif "result" in dep_result and isinstance(dep_result["result"], dict) and "code_files" in dep_result["result"]:
-                    # 다른 구조로 중첩된 경우
-                    logging.info(f"중첩된 구조에서 코드 파일 발견: {list(dep_result['result']['code_files'].keys())}")
-                    for filename, code in dep_result["result"]["code_files"].items():
-                        code_content += f"## {filename}\n```python\n{code}\n```\n\n"
-                
-                # 웹검색 결과 확인
-                if dep_role == "web_search":
-                    logging.info("웹검색 에이전트 결과 발견")
-                    
-                    # 직접 search_results 필드 확인
-                    if "search_results" in dep_result:
-                        search_results.extend(dep_result["search_results"])
-                        logging.info(f"직접 search_results 발견: {len(dep_result['search_results'])}개")
-                    
-                    # result 필드 내부의 raw_results 확인
-                    if "result" in dep_result and isinstance(dep_result["result"], dict):
-                        if "raw_results" in dep_result["result"]:
-                            search_results.extend(dep_result["result"]["raw_results"])
-                            logging.info(f"result.raw_results 발견: {len(dep_result['result']['raw_results'])}개")
-                        
-                        # 포맷된 콘텐츠 확인
-                        if "content" in dep_result["result"]:
-                            search_content = dep_result["result"]["content"]
-                            logging.info(f"검색 콘텐츠 발견: {len(search_content)} 문자")
-                
-                # 단순 텍스트 콘텐츠 처리
-                if "content" in dep_result:
-                    logging.info("텍스트 콘텐츠 발견, 길이: " + str(len(dep_result["content"])))
-                    code_content += dep_result["content"] + "\n\n"
-                elif "result" in dep_result and isinstance(dep_result["result"], dict) and "content" in dep_result["result"]:
-                    # 중첩된 콘텐츠
-                    logging.info("중첩된 텍스트 콘텐츠 발견, 길이: " + str(len(dep_result["result"]["content"])))
-                    code_content += dep_result["result"]["content"] + "\n\n"
-        
-        # 검색 결과 및 코드 내용을 참조 텍스트로 결합
-        reference_text = ""
-        
-        # 검색 결과 텍스트 추가
-        if search_content:
-            reference_text += f"## 웹 검색 결과\n{search_content}\n\n"
-        elif search_results:
-            reference_text += "## 웹 검색 결과\n"
-            for idx, result in enumerate(search_results, 1):
-                title = result.get("title", "제목 없음")
-                snippet = result.get("snippet", "내용 없음")
-                url = result.get("url", "")
-                reference_text += f"### {idx}. {title}\n{snippet}\n"
-                if url:
-                    reference_text += f"[링크]({url})\n"
-                reference_text += "\n"
-        
-        # 코드 콘텐츠 추가
-        if code_content:
-            reference_text += f"## 코드 및 분석\n{code_content}\n\n"
-        
-        if reference_text:
-            logging.info(f"참조 텍스트가 프롬프트에 추가됨 (길이: {len(reference_text)})")
-        
-        # 프롬프트 구성
+        # 태스크가 없는 경우 오류 반환
         if not topic:
             logging.warning(f"태스크 {task_id}: 주제가 비어 있습니다")
             return {
@@ -278,45 +178,130 @@ async def run_task(task: dict):
                 "error": "주제가 제공되지 않았습니다",
                 "result": {
                     "content": "작성할 주제를 지정해 주세요."
-                }
+                },
+                "role": AGENT_ROLE,
+                "task_id": task_id
             }
         
-        # 프롬프트 내용 통합
-        prompt = f"주제: {topic}\n\n"
-        if reference_text:
-            prompt += f"참고 자료:\n{reference_text}\n\n"
-        prompt += "위 정보를 바탕으로 명확하고 구조화된 보고서를 작성해주세요."
+        # 컨텍스트 데이터 수집
+        context_data = []
+        references = []
+        
+        # 1. 파라미터에서 references 추출
+        if "references" in params and params["references"]:
+            references.extend(params["references"])
+            logging.info(f"params에서 {len(params['references'])}개의 참조 자료 추출")
+        
+        # 2. context에서 depends_results 추출
+        if "context" in task and isinstance(task["context"], dict):
+            context = task["context"]
+            logging.info(f"컨텍스트 키: {list(context.keys())}")
+            
+            if "depends_results" in context and isinstance(context["depends_results"], list):
+                context_data.extend(context["depends_results"])
+                logging.info(f"context에서 {len(context['depends_results'])}개의 의존성 결과 추출")
+        
+        # 3. 직접 의존성 데이터 처리
+        if "depends_results" in task and isinstance(task["depends_results"], list):
+            context_data.extend(task["depends_results"])
+            logging.info(f"task에서 {len(task['depends_results'])}개의 의존성 결과 추출")
+        
+        # 4. previous_results 처리
+        if "previous_results" in params and isinstance(params["previous_results"], list):
+            context_data.extend(params["previous_results"])
+            logging.info(f"previous_results에서 {len(params['previous_results'])}개의 결과 추출")
+        
+        logging.info(f"총 {len(context_data)}개의 컨텍스트 데이터 수집됨")
+        
+        # 컨텍스트 데이터를 JSON 형식으로 변환하여 프롬프트에 추가
+        context_json = []
+        for idx, data in enumerate(context_data):
+            if not data:
+                continue
+                
+            # 데이터 간소화: 중요 필드만 유지
+            simplified_data = {}
+            
+            # role 필드 추출
+            if isinstance(data, dict):
+                # 직접 role 필드가 있는 경우
+                if "role" in data:
+                    simplified_data["role"] = data["role"]
+                # params에 role이 있는 경우
+                elif "params" in data and isinstance(data["params"], dict) and "role" in data["params"]:
+                    simplified_data["role"] = data["params"]["role"]
+                # 기본값
+                else:
+                    simplified_data["role"] = "unknown"
+                
+                # 결과 데이터 추출
+                if "result" in data and data["result"]:
+                    if isinstance(data["result"], dict):
+                        # 결과가 딕셔너리인 경우 그대로 포함
+                        simplified_data["result"] = data["result"]
+                    else:
+                        # 다른 타입인 경우 문자열로 변환
+                        simplified_data["result"] = str(data["result"])
+                        
+                # 결과가 없을 경우 전체 데이터 포함
+                else:
+                    simplified_data = data
+                    
+            # 데이터가 딕셔너리가 아닌 경우 문자열로 변환
+            else:
+                simplified_data = {"data": str(data)}
+            
+            context_json.append(simplified_data)
+        
+        # 프롬프트 구성
+        prompt = f"""# 작성 요청: {topic}
+
+## 컨텍스트 정보
+다음은 이 주제에 관련된 컨텍스트 정보입니다. 이 정보를 활용하여 보고서를 작성해주세요.
+
+```json
+{json.dumps(context_json, ensure_ascii=False, indent=2)}
+```
+
+## 요청 사항
+위 컨텍스트 정보를 활용하여 주제 '{topic}'에 대한 구조화된 보고서를 작성해주세요.
+- 보고서는 명확한 제목, 소개, 본문, 결론 등의 구조를 가져야 합니다.
+- 컨텍스트 정보에 포함된 웹 검색 결과, 코드 등을 적절히 활용하세요.
+- 정보가 부족한 부분은 일반적인 지식으로 보완하되, 출처가 명확한 정보를 우선적으로 사용하세요.
+- 사실과 의견을 명확히 구분하고, 객관적인 내용 중심으로 작성하세요.
+"""
         
         logging.info(f"최종 프롬프트 길이: {len(prompt)}")
         
-        # LLM 호출 또는 모의 응답 생성
+        # LLM 호출
         result = None
         try:
             from common.llm_client import LLMClient
             llm = LLMClient()
             logging.info(f"LLM 클라이언트 호출 시작 (태스크: {task_id})")
             result = llm.ask(prompt)
-            logging.info(f"LLM 응답 완료 (태스크: {task_id})")
+            logging.info(f"LLM 응답 완료 (태스크: {task_id}, 길이: {len(result)})")
         except Exception as e:
             logging.error(f"LLM 호출 오류: {str(e)}", exc_info=True)
-            # 오류 발생 시 모의 응답으로 대체
+            # 오류 발생 시 간단한 응답 생성
             result = f"""
 # {topic}
 
 ## 오류 알림
 LLM 서비스 연결에 문제가 발생했습니다. 잠시 후 다시 시도해 주세요.
 
-## 참고 자료 요약
-{reference_text[:500]}...
+## 컨텍스트 요약
+컨텍스트 데이터 {len(context_json)}개 항목 수신됨.
 """
         
         # 결과 반환
-        logging.info(f"태스크 {task_id} 완료, 응답 길이: {len(result)}")
         return {
             "status": "success",
             "result": {
                 "content": result
-            }
+            },
+            "role": AGENT_ROLE,
+            "task_id": task_id
         }
     except Exception as e:
         logging.exception(f"태스크 실행 중 오류 발생: {str(e)}")
@@ -326,7 +311,9 @@ LLM 서비스 연결에 문제가 발생했습니다. 잠시 후 다시 시도�
             "error": str(e),
             "result": {
                 "content": f"처리 중 오류가 발생했습니다: {str(e)}"
-            }
+            },
+            "role": AGENT_ROLE,
+            "task_id": task_id
         }
 
 # 서버 상태 확인용 API

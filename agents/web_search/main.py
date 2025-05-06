@@ -345,7 +345,7 @@ async def fetch_webpage_content(url: str) -> Dict[str, Any]:
         }
 
 # 공통 검색 함수
-async def perform_google_search(query: str, api_key: str, cx: str, num_results: int = 5, fetch_html: bool = False):
+async def perform_google_search(query: str, api_key: str, cx: str, num_results: int = 1, fetch_html: bool = False):
     """
     Google Custom Search API를 사용하여 웹 검색을 수행합니다.
     
