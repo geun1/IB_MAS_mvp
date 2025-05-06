@@ -42,6 +42,7 @@ class QueryRequest(BaseModel):
     """쿼리 요청 모델"""
     query: str
     conversation_id: Optional[str] = None
+    message_id: Optional[str] = None
     user_id: Optional[str] = None
     context: Optional[Dict[str, Any]] = None
     agent_configs: Optional[Dict[str, Any]] = None

@@ -323,6 +323,9 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
         []
     ); // 완료된 대화 단위들
     const [conversationId, setConversationId] = useState<string | null>(null);
+    const [currentMessageId, setCurrentMessageId] = useState<string | null>(
+        null
+    ); // 현재 메시지 ID 추가
     const [waitingForResponse, setWaitingForResponse] = useState(false);
 
     // 각 단계별 폴링 상태
@@ -355,6 +358,10 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                 console.log("쿼리 요청 성공:", data);
                 if (data.conversation_id) {
                     setConversationId(data.conversation_id);
+                    // 메시지 ID도 저장
+                    if (data.message_id) {
+                        setCurrentMessageId(data.message_id);
+                    }
                 } else {
                     setWaitingForResponse(false);
                 }
@@ -374,252 +381,101 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
 
     // 태스크 분리 결과 폴링 쿼리
     const { data: decompositionData, refetch: refetchDecomposition } = useQuery(
-        ["taskDecomposition", conversationId],
+        ["taskDecomposition", conversationId, currentMessageId], // 메시지 ID 추가
         async () => {
             if (!conversationId) throw new Error("대화 ID가 없습니다");
+            if (!currentMessageId) throw new Error("메시지 ID가 없습니다");
 
-            console.log(`[태스크 분리] 폴링 시도: ${conversationId}`);
+            console.log(
+                `[태스크 분리] 폴링 시도: ${conversationId}, 메시지: ${currentMessageId}`
+            );
 
-            // 분리된 태스크 분리 API 호출
+            // 분리된 태스크 분리 API 호출 - 메시지 ID 추가
             const response = await orchestratorApi.getTaskDecomposition(
-                conversationId
+                conversationId,
+                currentMessageId
             );
 
             console.log("[태스크 분리] 응답:", response);
             return response;
         },
         {
-            // conversationId가 있고 decompositionPolling이 true일 때만 활성화
-            enabled: !!conversationId && pollingState.decompositionPolling,
+            // conversationId와 currentMessageId가 있고 decompositionPolling이 true일 때만 활성화
+            enabled:
+                !!conversationId &&
+                !!currentMessageId &&
+                pollingState.decompositionPolling,
             refetchInterval: 1000, // 1초마다 폴링
             // 성공한 경우에도 refetch 계속 수행
             refetchOnWindowFocus: false,
             retry: true,
             retryDelay: 1000,
-            onSuccess: (data) => {
-                if (!data || !data.tasks || data.tasks.length === 0) {
-                    console.log("[태스크 분리] 결과 없음, 폴링 계속...");
-                    return;
-                }
-
-                console.log("[태스크 분리] 성공:", data);
-
-                // 태스크 분리 결과 저장
-                setTaskDecomposition(data);
-
-                // 태스크 ID 목록 추출 - index를 ID로 사용
-                const ids = data.tasks.map(
-                    (task: TaskDecompositionItem, index: number) =>
-                        task.index?.toString() || index.toString()
-                );
-                console.log("[태스크 분리] 태스크 ID 목록:", ids);
-                setTaskIds(ids);
-
-                // 태스크 분리 결과 즉시 렌더링
-                updateTaskDecomposition(data);
-
-                // *** 중요: 태스크 분리 폴링 즉시 중단하고 태스크 결과 폴링 시작 ***
-                console.log(
-                    "[시퀀스] 태스크 분리 완료, 에이전트 태스크 결과 폴링 시작"
-                );
-                setPollingState({
-                    decompositionPolling: false, // 태스크 분리 폴링 중단
-                    taskResultPolling: true, // 태스크 결과 폴링 시작
-                    finalResultPolling: false,
-                });
-            },
-            onError: (error) => {
-                console.error("[태스크 분리] 조회 오류:", error);
-            },
         }
     );
 
     // 에이전트 태스크 결과 폴링 쿼리
     const { data: taskResultsData, refetch: refetchTaskResults } = useQuery(
-        ["taskResults", conversationId],
+        ["taskResults", conversationId, currentMessageId], // 메시지 ID 추가
         async () => {
             if (!conversationId) throw new Error("대화 ID가 없습니다");
+            if (!currentMessageId) throw new Error("메시지 ID가 없습니다");
 
-            console.log(`[에이전트 결과] 폴링 시도: ${conversationId}`);
+            console.log(
+                `[에이전트 결과] 폴링 시도: ${conversationId}, 메시지: ${currentMessageId}`
+            );
 
-            // 분리된 태스크 결과 API 호출
+            // 분리된 태스크 결과 API 호출 - 메시지 ID 추가
             const response = await orchestratorApi.getAgentTasks(
-                conversationId
+                conversationId,
+                currentMessageId
             );
 
             console.log("[에이전트 결과] 응답:", response);
             return response;
         },
         {
-            // conversationId가 있고 taskResultPolling이 true일 때만 활성화
-            enabled: !!conversationId && pollingState.taskResultPolling,
+            // conversationId와 currentMessageId가 있고 taskResultPolling이 true일 때만 활성화
+            enabled:
+                !!conversationId &&
+                !!currentMessageId &&
+                pollingState.taskResultPolling,
             refetchInterval: 1000, // 1초마다 폴링
             refetchOnWindowFocus: false,
             retry: true,
             retryDelay: 1000,
-            onSuccess: (data) => {
-                if (!data || !data.tasks || data.tasks.length === 0) {
-                    console.log("[에이전트 결과] 결과 없음, 폴링 계속...");
-                    return;
-                }
-
-                console.log("[에이전트 결과] 데이터:", data);
-                console.log(
-                    "[에이전트 결과] 현재 완료된 태스크:",
-                    Array.from(completedTaskIds)
-                );
-
-                // 완료된 태스크 추적
-                const newCompletedTasks = new Set(completedTaskIds);
-                let hasNewCompletedTask = false;
-
-                // 모든 태스크를 화면에 표시하고 완료된 태스크 추적
-                data.tasks.forEach((task: TaskItem) => {
-                    // 태스크 ID 확인 - id가 없는 경우 index를 사용
-                    const taskId = task.id || task.index?.toString() || "";
-                    console.log(
-                        `[에이전트 결과] 태스크 확인: ID=${taskId}, 상태=${task.status}, 역할=${task.role}`
-                    );
-
-                    // 완료된 태스크이고 아직 처리되지 않은 경우
-                    if (
-                        task.status === "completed" &&
-                        taskId &&
-                        !completedTaskIds.has(taskId)
-                    ) {
-                        console.log(
-                            `[에이전트 결과] 새 완료 태스크 발견: ${taskId}`
-                        );
-                        newCompletedTasks.add(taskId);
-                        hasNewCompletedTask = true;
-                    }
-
-                    // 상태와 관계없이 모든 태스크 결과 표시 (업데이트)
-                    updateTaskResult(task);
-                });
-
-                // 새로 완료된 태스크가 있으면 상태 업데이트
-                if (hasNewCompletedTask) {
-                    console.log(
-                        "[에이전트 결과] 완료된 태스크 업데이트:",
-                        Array.from(newCompletedTasks)
-                    );
-                    setCompletedTaskIds(newCompletedTasks);
-                }
-
-                // 모든 태스크가 완료되었는지 확인 (두 가지 조건 확인)
-                const allTasksCompleted =
-                    // 1. taskIds 유효성 확인
-                    taskIds.length > 0 &&
-                    // 2. 완료된 태스크 개수가 전체 태스크 개수와 같거나 큰 경우
-                    (newCompletedTasks.size >= taskIds.length ||
-                        // 3. 서버에서 받은 태스크 개수가 전체 태스크 개수와 같거나 크고, 모두 완료 상태인 경우
-                        (data.tasks.length >= taskIds.length &&
-                            data.tasks.every(
-                                (task: TaskItem) => task.status === "completed"
-                            )));
-
-                console.log(
-                    `[에이전트 결과] 태스크 진행 상황: ${
-                        Array.from(newCompletedTasks).length
-                    }/${
-                        taskIds.length
-                    } 완료, 모두 완료됨: ${allTasksCompleted}, 서버 태스크 개수: ${
-                        data.tasks.length
-                    }`
-                );
-
-                // 모든 태스크가 완료되면 태스크 결과 폴링 중단하고 최종 결과 폴링 시작
-                if (allTasksCompleted) {
-                    console.log(
-                        "[시퀀스] 모든 태스크 완료, 최종 결과 폴링 시작"
-                    );
-                    setPollingState({
-                        decompositionPolling: false,
-                        taskResultPolling: false, // 태스크 결과 폴링 중단
-                        finalResultPolling: true, // 최종 결과 폴링 시작
-                    });
-                }
-            },
-            onError: (error) => {
-                console.error("[에이전트 결과] 조회 오류:", error);
-            },
         }
     );
 
-    // 최종 통합 결과 폴링 쿼리
+    // 최종 결과 폴링 쿼리
     const { data: finalResultData, refetch: refetchFinalResult } = useQuery(
-        ["finalResult", conversationId],
+        ["finalResult", conversationId, currentMessageId], // 메시지 ID 추가
         async () => {
             if (!conversationId) throw new Error("대화 ID가 없습니다");
+            if (!currentMessageId) throw new Error("메시지 ID가 없습니다");
 
-            console.log(`[최종 결과] 폴링 시도: ${conversationId}`);
+            console.log(
+                `[최종 결과] 폴링 시도: ${conversationId}, 메시지: ${currentMessageId}`
+            );
 
-            // 분리된 최종 결과 API 호출
+            // 분리된 최종 결과 API 호출 - 메시지 ID 추가
             const response = await orchestratorApi.getFinalResult(
-                conversationId
+                conversationId,
+                currentMessageId
             );
 
             console.log("[최종 결과] 응답:", response);
             return response;
         },
         {
-            // conversationId가 있고 finalResultPolling이 true일 때만 활성화
-            enabled: !!conversationId && pollingState.finalResultPolling,
+            // conversationId와 currentMessageId가 있고 finalResultPolling이 true일 때만 활성화
+            enabled:
+                !!conversationId &&
+                !!currentMessageId &&
+                pollingState.finalResultPolling,
             refetchInterval: 1000, // 1초마다 폴링
             refetchOnWindowFocus: false,
             retry: true,
             retryDelay: 1000,
-            onSuccess: (data) => {
-                if (!data || !data.message) {
-                    console.log("[최종 결과] 메시지 없음, 폴링 계속...");
-                    return;
-                }
-
-                console.log("[최종 결과] 성공:", data);
-
-                // 최종 결과가 있으면 즉시 렌더링하고 모든 폴링 중단
-                if (data.message) {
-                    // 최종 결과 즉시 렌더링
-                    updateFinalResult(data);
-
-                    // 모든 폴링 중단
-                    console.log("[시퀀스] 최종 결과 완료, 모든 폴링 종료");
-                    setPollingState({
-                        decompositionPolling: false,
-                        taskResultPolling: false,
-                        finalResultPolling: false, // 최종 결과 폴링 중단
-                    });
-
-                    // 응답 대기 상태 해제
-                    setWaitingForResponse(false);
-
-                    // 현재 대화 단위를 완료된 대화 단위로 이동 (동기적으로 처리)
-                    // 이전 방식 대신 직접 상태 업데이트
-                    if (currentConversationUnit) {
-                        // 현재 대화 단위를 완료된 대화 단위에 바로 추가
-                        console.log("[대화] 현재 대화 완료 처리");
-                        const updatedCompletedUnits = [
-                            ...completedUnits,
-                            currentConversationUnit,
-                        ];
-                        setCompletedUnits(updatedCompletedUnits);
-                        setCurrentConversationUnit(null);
-
-                        // 두 번의 상태 업데이트 방지를 위해 이전 비동기 방식 제거
-                        // setCurrentConversationUnit((prev) => {
-                        //     if (prev) {
-                        //         setCompletedUnits((units) => [...units, prev]);
-                        //         return null;
-                        //     }
-                        //     return prev;
-                        // });
-                    }
-                }
-            },
-            onError: (error) => {
-                console.error("[최종 결과] 조회 오류:", error);
-            },
         }
     );
 
@@ -647,6 +503,154 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
         refetchTaskResults,
         refetchFinalResult,
     ]);
+
+    // 태스크 분해 결과 처리 useEffect
+    useEffect(() => {
+        if (
+            !decompositionData ||
+            !decompositionData.tasks ||
+            decompositionData.tasks.length === 0
+        ) {
+            return;
+        }
+
+        console.log("[태스크 분해] 성공:", decompositionData);
+
+        // 태스크 분해 결과 저장
+        setTaskDecomposition(decompositionData);
+
+        // 태스크 ID 목록 추출 - index를 ID로 사용
+        const ids = decompositionData.tasks.map(
+            (task: TaskDecompositionItem, index: number) =>
+                task.index?.toString() || index.toString()
+        );
+        console.log("[태스크 분해] 태스크 ID 목록:", ids);
+        setTaskIds(ids);
+
+        // 태스크 분해 결과 즉시 렌더링
+        updateTaskDecomposition(decompositionData);
+
+        // *** 중요: 태스크 분해 폴링 즉시 중단하고 태스크 결과 폴링 시작 ***
+        console.log(
+            "[시퀀스] 태스크 분해 완료, 에이전트 태스크 결과 폴링 시작"
+        );
+        setPollingState({
+            decompositionPolling: false, // 태스크 분해 폴링 중단
+            taskResultPolling: true, // 태스크 결과 폴링 시작
+            finalResultPolling: false,
+        });
+    }, [decompositionData]);
+
+    // 태스크 결과 처리 useEffect
+    useEffect(() => {
+        if (
+            !taskResultsData ||
+            !taskResultsData.tasks ||
+            taskResultsData.tasks.length === 0
+        ) {
+            return;
+        }
+
+        console.log("[에이전트 결과] 데이터:", taskResultsData);
+        console.log(
+            "[에이전트 결과] 현재 완료된 태스크:",
+            Array.from(completedTaskIds)
+        );
+
+        // 완료된 태스크 추적
+        const newCompletedTasks = new Set(completedTaskIds);
+        let hasNewCompletedTask = false;
+
+        // 모든 태스크를 화면에 표시하고 완료된 태스크 추적
+        taskResultsData.tasks.forEach((task: TaskItem) => {
+            // 태스크 ID 확인 - id가 없는 경우 index를 사용
+            const taskId = task.id || task.index?.toString() || "";
+            console.log(
+                `[에이전트 결과] 태스크 확인: ID=${taskId}, 상태=${task.status}, 역할=${task.role}`
+            );
+
+            // 완료된 태스크이고 아직 처리되지 않은 경우
+            if (
+                task.status === "completed" &&
+                taskId &&
+                !completedTaskIds.has(taskId)
+            ) {
+                console.log(`[에이전트 결과] 새 완료 태스크 발견: ${taskId}`);
+                newCompletedTasks.add(taskId);
+                hasNewCompletedTask = true;
+            }
+
+            // 상태와 관계없이 모든 태스크 결과 표시 (업데이트)
+            updateTaskResult(task);
+        });
+
+        // 새로 완료된 태스크가 있으면 상태 업데이트
+        if (hasNewCompletedTask) {
+            console.log(
+                "[에이전트 결과] 완료된 태스크 업데이트:",
+                Array.from(newCompletedTasks)
+            );
+            setCompletedTaskIds(newCompletedTasks);
+        }
+
+        // 모든 태스크가 완료되었는지 확인 (두 가지 조건 확인)
+        const allTasksCompleted =
+            // 1. taskIds 유효성 확인
+            taskIds.length > 0 &&
+            // 2. 완료된 태스크 개수가 전체 태스크 개수와 같거나 큰 경우
+            (newCompletedTasks.size >= taskIds.length ||
+                // 3. 서버에서 받은 태스크 개수가 전체 태스크 개수와 같거나 크고, 모두 완료 상태인 경우
+                (taskResultsData.tasks.length >= taskIds.length &&
+                    taskResultsData.tasks.every(
+                        (task: TaskItem) => task.status === "completed"
+                    )));
+
+        console.log(
+            `[에이전트 결과] 태스크 진행 상황: ${
+                Array.from(newCompletedTasks).length
+            }/${
+                taskIds.length
+            } 완료, 모두 완료됨: ${allTasksCompleted}, 서버 태스크 개수: ${
+                taskResultsData.tasks.length
+            }`
+        );
+
+        // 모든 태스크가 완료되면 태스크 결과 폴링 중단하고 최종 결과 폴링 시작
+        if (allTasksCompleted) {
+            console.log("[시퀀스] 모든 태스크 완료, 최종 결과 폴링 시작");
+            setPollingState({
+                decompositionPolling: false,
+                taskResultPolling: false, // 태스크 결과 폴링 중단
+                finalResultPolling: true, // 최종 결과 폴링 시작
+            });
+        }
+    }, [taskResultsData]);
+
+    // 최종 결과 처리 useEffect
+    useEffect(() => {
+        if (!finalResultData || !finalResultData.message) {
+            return;
+        }
+
+        console.log("[최종 결과] 성공:", finalResultData);
+
+        // 최종 결과가 있으면 즉시 렌더링하고 모든 폴링 중단
+        if (finalResultData.message) {
+            // 최종 결과 즉시 렌더링
+            updateFinalResult(finalResultData);
+
+            // 모든 폴링 중단
+            console.log("[시퀀스] 최종 결과 완료, 모든 폴링 종료");
+            setPollingState({
+                decompositionPolling: false,
+                taskResultPolling: false,
+                finalResultPolling: false, // 최종 결과 폴링 중단
+            });
+
+            // 응답 대기 상태 해제
+            setWaitingForResponse(false);
+        }
+    }, [finalResultData]);
 
     // 태스크 분리 결과 업데이트 함수
     const updateTaskDecomposition = (data: {
@@ -759,10 +763,14 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
         if (!query.trim() || queryMutation.isLoading || waitingForResponse)
             return;
 
+        // 대화 ID가 없으면 생성, 있으면 유지 (새로운 메시지만 생성)
         const currentConvId = conversationId || generateConversationId();
         if (!conversationId) {
             setConversationId(currentConvId);
         }
+
+        // 메시지 ID는 항상 새로 생성
+        setCurrentMessageId(null);
 
         // 새 사용자 메시지 생성
         const userMessage: Message = {
@@ -792,6 +800,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
         const request: QueryRequest = {
             query: query.trim(),
             conversation_id: currentConvId,
+            // 메시지 ID는 서버에서 생성
         };
 
         // 쿼리 요청 즉시 처리 중 상태로 설정

@@ -77,10 +77,44 @@ export interface Scenario {
     tasks: TaskRequest[];
 }
 
-// 오케스트레이터 요청/응답 타입
+// 대화 관련 타입 추가
+export interface Conversation {
+    id: string;
+    title?: string;
+    created_at: number;
+    updated_at: number;
+    user_id?: string;
+    messages: Message[];
+}
+
+// 메시지(요청-응답) 관련 타입
+export interface Message {
+    id: string;
+    conversation_id: string;
+    request: string;
+    response?: string;
+    created_at: number;
+    updated_at: number;
+    status: MessageStatus;
+    tasks?: Array<{
+        id: string;
+        status: string;
+        result?: any;
+    }>;
+}
+
+export enum MessageStatus {
+    PENDING = "pending",
+    PROCESSING = "processing",
+    COMPLETED = "completed",
+    FAILED = "failed",
+}
+
+// 오케스트레이터 요청/응답 타입 변경
 export interface QueryRequest {
     query: string;
     conversation_id?: string;
+    message_id?: string;
     user_id?: string;
     context?: Record<string, any>;
     agent_configs?: Record<string, Record<string, string>>; // 에이전트별 설정 정보
@@ -89,6 +123,7 @@ export interface QueryRequest {
 
 export interface QueryResponse {
     conversation_id: string;
+    message_id?: string;
     status: string;
     tasks: Array<{
         id: string;

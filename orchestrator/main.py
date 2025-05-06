@@ -56,6 +56,7 @@ class ConversationState:
         self.update_time: float
         self.end_time: Optional[float] = None
         self.task_descriptions: List[str] = []
+        self.message_id: str
 
 # 앱 시작 이벤트
 @app.on_event("startup")
@@ -79,11 +80,25 @@ async def process_query(request: QueryRequest):
     사용자 쿼리 처리 엔드포인트
     """
     try:
-        # 대화 ID 생성
-        conversation_id = request.conversation_id or str(uuid.uuid4())
+        # 대화 ID 확인 또는 생성
+        conversation_id = request.conversation_id
+        if not conversation_id:
+            # 새 대화 생성
+            conversation_id = await app.state.context_manager.create_conversation(request.user_id)
+        
+        # 메시지 ID 생성
+        message_id = request.message_id
+        if not message_id:
+            # 새 메시지 생성
+            message_id = await app.state.context_manager.create_message(
+                conversation_id=conversation_id,
+                query=request.query,
+                user_id=request.user_id
+            )
+        
         user_id = request.user_id or "익명"
         
-        logger.info(f"새 쿼리 접수: '{request.query}' (대화: {conversation_id}, 사용자: {user_id})")
+        logger.info(f"새 쿼리 접수: '{request.query}' (대화: {conversation_id}, 메시지: {message_id}, 사용자: {user_id})")
         
         # 비활성화된 에이전트 목록 로깅
         if request.disabled_agents:
@@ -96,6 +111,7 @@ async def process_query(request: QueryRequest):
         conversation.status = "processing"
         conversation.start_time = time.time()
         conversation.update_time = time.time()
+        conversation.message_id = message_id  # 메시지 ID 저장
         app.state.conversations[conversation_id] = conversation
         
         # 태스크 분해
@@ -263,6 +279,7 @@ async def process_query(request: QueryRequest):
             # 저장할 최종 응답 데이터 구성
             final_data = {
                 "conversation_id": conversation_id,
+                "message_id": message_id,
                 "query": request.query,
                 "status": "completed",
                 "tasks": final_results,
@@ -273,15 +290,19 @@ async def process_query(request: QueryRequest):
                 "execution_levels": execution_levels  # 실행 레벨 정보 추가
             }
             
-            # Redis에 저장
+            # 메시지 업데이트
+            await app.state.context_manager.update_message(message_id, final_data)
+            
+            # Redis에 저장 (기존 호환성 유지)
             await app.state.context_manager.save_response(conversation_id, final_data)
-            logger.info(f"대화 ID {conversation_id}의 최종 상태를 Redis에 저장했습니다.")
+            logger.info(f"대화 ID {conversation_id}, 메시지 ID {message_id}의 최종 상태를 Redis에 저장했습니다.")
         except Exception as e:
             logger.error(f"대화 상태 저장 중 오류: {str(e)}")
             
         # 최종 응답 반환
         return {
             "conversation_id": conversation_id,
+            "message_id": message_id,
             "status": "success",
             "message": "대화가 성공적으로 처리되었습니다."
         }
@@ -644,125 +665,126 @@ async def get_conversation_by_api(conversation_id: str):
 
 # 새로운 API 엔드포인트: 태스크 분리 결과 조회
 @app.get("/conversations/{conversation_id}/decomposition", tags=["conversation"])
-async def get_task_decomposition(conversation_id: str):
+async def get_task_decomposition(conversation_id: str, message_id: Optional[str] = None):
     """
-    태스크 분리 결과 조회 API
+    태스크 분해 결과 조회 API
     
     Args:
         conversation_id: 대화 ID
+        message_id: 메시지 ID (선택 사항)
         
     Returns:
-        태스크 분리 결과
+        태스크 분해 결과
     """
     try:
-        if not app.state.context_manager:
-            return {"error": "컨텍스트 관리자가 초기화되지 않았습니다."}
-            
-        conversation = await app.state.context_manager.get_conversation(conversation_id)
+        if message_id:
+            # 특정 메시지 정보 조회
+            message = await app.state.context_manager.get_message(message_id)
+            if not message:
+                return {"error": f"메시지 {message_id}를 찾을 수 없습니다."}
+                
+            # 메시지에서 태스크 분해 결과 추출
+            if "tasks" in message:
+                return {
+                    "conversation_id": conversation_id,
+                    "message_id": message_id,
+                    "tasks": message.get("tasks", []),
+                    "task_descriptions": message.get("task_descriptions", [])
+                }
         
+        # 메시지 ID가 없거나 메시지에 태스크 분해 결과가 없는 경우 대화 정보에서 조회
+        conversation = await app.state.context_manager.get_conversation(conversation_id)
         if not conversation:
             return {"error": f"대화 {conversation_id}를 찾을 수 없습니다."}
-        
-        # 태스크 분리 결과만 반환
-        response = {
+            
+        return {
             "conversation_id": conversation_id,
-            "tasks": [],
+            "tasks": conversation.get("task_descriptions", []),
             "original_query": conversation.get("query", "")
         }
-        
-        # 태스크 분리 결과가 있으면 추가
-        if "task_descriptions" in conversation and conversation["task_descriptions"]:
-            # 이미 저장된 tasks 정보가 있으면 사용
-            if "tasks" in conversation and conversation["tasks"]:
-                final_tasks = conversation["tasks"]
-            else:
-                final_tasks = []
-            
-            # 각 레벨별 태스크를 플랫하게 변환하여 추가
-            task_index = 0
-            for level_idx, level_tasks in enumerate(conversation["task_descriptions"]):
-                for task_desc in level_tasks:
-                    role = "unknown"
-                    if task_index < len(final_tasks) and "role" in final_tasks[task_index]:
-                        role = final_tasks[task_index]["role"]
-                    
-                    response["tasks"].append({
-                        "description": task_desc,
-                        "role": role,
-                        "index": task_index,
-                        "level": level_idx
-                    })
-                    task_index += 1
-        
-        return response
     except Exception as e:
-        logger.error(f"태스크 분리 결과 조회 중 오류: {str(e)}")
-        return {"error": f"태스크 분리 결과 조회 중 오류: {str(e)}"}
+        logger.error(f"태스크 분해 결과 조회 중 오류: {str(e)}")
+        return {"error": f"태스크 분해 결과 조회 중 오류가 발생했습니다: {str(e)}"}
 
 # 새로운 API 엔드포인트: 에이전트 태스크 결과 조회
 @app.get("/conversations/{conversation_id}/tasks", tags=["conversation"])
-async def get_agent_tasks(conversation_id: str):
+async def get_agent_tasks(conversation_id: str, message_id: Optional[str] = None):
     """
     에이전트 태스크 결과 조회 API
     
     Args:
         conversation_id: 대화 ID
+        message_id: 메시지 ID (선택 사항)
         
     Returns:
         에이전트 태스크 결과
     """
     try:
-        if not app.state.context_manager:
-            return {"error": "컨텍스트 관리자가 초기화되지 않았습니다."}
-            
-        conversation = await app.state.context_manager.get_conversation(conversation_id)
+        if message_id:
+            # 특정 메시지 정보 조회
+            message = await app.state.context_manager.get_message(message_id)
+            if not message:
+                return {"error": f"메시지 {message_id}를 찾을 수 없습니다."}
+                
+            # 메시지에서 태스크 결과 추출
+            if "tasks" in message:
+                return {
+                    "conversation_id": conversation_id,
+                    "message_id": message_id,
+                    "tasks": message.get("tasks", [])
+                }
         
-        if not conversation:
-            return {"error": f"대화 {conversation_id}를 찾을 수 없습니다."}
-        
-        # 태스크 결과만 반환
-        response = {
+        # 메시지 ID가 없거나 메시지에 태스크 결과가 없는 경우 대화 정보에서 조회
+        tasks = await app.state.context_manager.get_tasks_by_conversation(conversation_id)
+        return {
             "conversation_id": conversation_id,
-            "tasks": conversation.get("tasks", [])
+            "tasks": tasks
         }
-        
-        return response
     except Exception as e:
         logger.error(f"에이전트 태스크 결과 조회 중 오류: {str(e)}")
-        return {"error": f"에이전트 태스크 결과 조회 중 오류: {str(e)}"}
+        return {"error": f"에이전트 태스크 결과 조회 중 오류가 발생했습니다: {str(e)}"}
 
 # 새로운 API 엔드포인트: 최종 통합 결과 조회
 @app.get("/conversations/{conversation_id}/result", tags=["conversation"])
-async def get_final_result(conversation_id: str):
+async def get_final_result(conversation_id: str, message_id: Optional[str] = None):
     """
-    최종 통합 결과 조회 API
+    최종 결과 조회 API
     
     Args:
         conversation_id: 대화 ID
+        message_id: 메시지 ID (선택 사항)
         
     Returns:
-        최종 통합 결과
+        최종 대화 결과
     """
     try:
-        if not app.state.context_manager:
-            return {"error": "컨텍스트 관리자가 초기화되지 않았습니다."}
-            
-        conversation = await app.state.context_manager.get_conversation(conversation_id)
+        if message_id:
+            # 특정 메시지 정보 조회
+            message = await app.state.context_manager.get_message(message_id)
+            if not message:
+                return {"error": f"메시지 {message_id}를 찾을 수 없습니다."}
+                
+            # 메시지에서 응답 추출
+            return {
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "message": message.get("response", ""),
+                "status": message.get("status", "pending")
+            }
         
+        # 메시지 ID가 없는 경우 대화 정보에서 조회
+        conversation = await app.state.context_manager.get_conversation(conversation_id)
         if not conversation:
             return {"error": f"대화 {conversation_id}를 찾을 수 없습니다."}
-        
-        # 최종 결과만 반환
-        response = {
+            
+        return {
             "conversation_id": conversation_id,
-            "status": conversation.get("status", "unknown"),
-            "message": conversation.get("message", "")
+            "message": conversation.get("message", ""),
+            "status": conversation.get("status", "unknown")
         }
-        
-        return response
     except Exception as e:
-        logger.error(f"최종 통합 결과 조회 중 오류: {str(e)}")
-        return {"error": f"최종 통합 결과 조회 중 오류: {str(e)}"}
+        logger.error(f"최종 결과 조회 중 오류: {str(e)}")
+        return {"error": f"최종 결과 조회 중 오류가 발생했습니다: {str(e)}"}
 
 # 서버 실행 (직접 실행 시)
 if __name__ == "__main__":

@@ -101,12 +101,17 @@ export const orchestratorApi = {
     },
 
     // 태스크 분리 결과 조회 API
-    getTaskDecomposition: async (conversationId: string) => {
+    getTaskDecomposition: async (
+        conversationId: string,
+        messageId?: string
+    ) => {
         try {
-            // 이제 특별한 태스크 분리 API를 호출
-            const response = await apiClient.get(
-                `${BASE_URL}/conversations/${conversationId}/decomposition`
-            );
+            // 메시지 ID가 있으면 쿼리 파라미터로 추가
+            const url = messageId
+                ? `${BASE_URL}/conversations/${conversationId}/decomposition?message_id=${messageId}`
+                : `${BASE_URL}/conversations/${conversationId}/decomposition`;
+
+            const response = await apiClient.get(url);
             return response.data;
         } catch (error) {
             console.error("태스크 분리 결과 조회 오류:", error);
@@ -115,12 +120,14 @@ export const orchestratorApi = {
     },
 
     // 진행 중인 에이전트 태스크 결과 조회 API
-    getAgentTasks: async (conversationId: string) => {
+    getAgentTasks: async (conversationId: string, messageId?: string) => {
         try {
-            // 이제 특별한 태스크 결과 API를 호출
-            const response = await apiClient.get(
-                `${BASE_URL}/conversations/${conversationId}/tasks`
-            );
+            // 메시지 ID가 있으면 쿼리 파라미터로 추가
+            const url = messageId
+                ? `${BASE_URL}/conversations/${conversationId}/tasks?message_id=${messageId}`
+                : `${BASE_URL}/conversations/${conversationId}/tasks`;
+
+            const response = await apiClient.get(url);
             return response.data;
         } catch (error) {
             console.error("에이전트 태스크 결과 조회 오류:", error);
@@ -129,12 +136,18 @@ export const orchestratorApi = {
     },
 
     // 특정 에이전트 태스크 결과 조회 API
-    getAgentTaskResult: async (conversationId: string, taskId: string) => {
+    getAgentTaskResult: async (
+        conversationId: string,
+        taskId: string,
+        messageId?: string
+    ) => {
         try {
             // 태스크 결과 API를 호출하고, 특정 태스크만 필터링
-            const response = await apiClient.get(
-                `${BASE_URL}/conversations/${conversationId}/tasks`
-            );
+            const url = messageId
+                ? `${BASE_URL}/conversations/${conversationId}/tasks?message_id=${messageId}`
+                : `${BASE_URL}/conversations/${conversationId}/tasks`;
+
+            const response = await apiClient.get(url);
 
             // 요청한 taskId와 일치하는 태스크 찾기
             const task = response.data.tasks?.find(
@@ -143,6 +156,7 @@ export const orchestratorApi = {
 
             return {
                 conversation_id: response.data.conversation_id,
+                message_id: response.data.message_id,
                 task: task || null,
             };
         } catch (error) {
@@ -152,12 +166,14 @@ export const orchestratorApi = {
     },
 
     // 최종 통합 결과 조회 API
-    getFinalResult: async (conversationId: string) => {
+    getFinalResult: async (conversationId: string, messageId?: string) => {
         try {
-            // 이제 특별한 최종 결과 API를 호출
-            const response = await apiClient.get(
-                `${BASE_URL}/conversations/${conversationId}/result`
-            );
+            // 메시지 ID가 있으면 쿼리 파라미터로 추가
+            const url = messageId
+                ? `${BASE_URL}/conversations/${conversationId}/result?message_id=${messageId}`
+                : `${BASE_URL}/conversations/${conversationId}/result`;
+
+            const response = await apiClient.get(url);
             return response.data;
         } catch (error) {
             console.error("최종 통합 결과 조회 오류:", error);

@@ -7,6 +7,7 @@ from typing import Dict, List, Any, Optional, Union
 import redis
 import json
 import inspect
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -272,4 +273,189 @@ class ContextManager:
         
         except Exception as e:
             logger.error(f"대화 태스크 조회 중 오류: {str(e)}")
+            return []
+
+    async def create_conversation(self, user_id: Optional[str] = None) -> str:
+        """
+        새 대화 생성
+        
+        Args:
+            user_id: 사용자 ID
+            
+        Returns:
+            생성된 대화 ID
+        """
+        try:
+            # 대화 ID 생성
+            conversation_id = str(uuid.uuid4())
+            
+            # 현재 시간 기록
+            timestamp = time.time()
+            
+            # 대화 메타데이터 저장
+            conversation = {
+                "conversation_id": conversation_id,
+                "status": "active",
+                "created_at": timestamp,
+                "updated_at": timestamp,
+                "user_id": user_id,
+                "messages": []
+            }
+            
+            # Redis에 저장
+            key = f"conversation:{conversation_id}"
+            self.redis.set(key, json.dumps(conversation))
+            self.redis.expire(key, self.ttl)
+            
+            logger.info(f"새 대화 생성: {conversation_id}")
+            return conversation_id
+        except Exception as e:
+            logger.error(f"대화 생성 중 오류: {str(e)}")
+            # 실패 시 임의의 ID 반환
+            return str(uuid.uuid4())
+    
+    async def create_message(self, conversation_id: str, query: str, user_id: Optional[str] = None) -> str:
+        """
+        새 메시지 생성
+        
+        Args:
+            conversation_id: 대화 ID
+            query: 사용자 쿼리
+            user_id: 사용자 ID
+            
+        Returns:
+            생성된 메시지 ID
+        """
+        try:
+            # 대화 정보 확인
+            conversation = await self.get_conversation(conversation_id)
+            if not conversation:
+                # 대화가 없으면 새로 생성
+                conversation_id = await self.create_conversation(user_id)
+                conversation = await self.get_conversation(conversation_id)
+                
+            # 메시지 ID 생성
+            message_id = str(uuid.uuid4())
+            
+            # 현재 시간 기록
+            timestamp = time.time()
+            
+            # 메시지 저장
+            message = {
+                "id": message_id,
+                "conversation_id": conversation_id,
+                "request": query,
+                "created_at": timestamp,
+                "updated_at": timestamp,
+                "status": "pending",
+                "user_id": user_id
+            }
+            
+            # Redis에 메시지 저장
+            key = f"message:{message_id}"
+            self.redis.set(key, json.dumps(message))
+            self.redis.expire(key, self.ttl)
+            
+            # 대화 메시지 목록 업데이트
+            if "messages" not in conversation:
+                conversation["messages"] = []
+            conversation["messages"].append(message_id)
+            conversation["updated_at"] = timestamp
+            
+            # 대화 정보 업데이트
+            conv_key = f"conversation:{conversation_id}"
+            self.redis.set(conv_key, json.dumps(conversation))
+            self.redis.expire(conv_key, self.ttl)
+            
+            logger.info(f"새 메시지 생성: {message_id} (대화: {conversation_id})")
+            return message_id
+        except Exception as e:
+            logger.error(f"메시지 생성 중 오류: {str(e)}")
+            # 실패 시 임의의 ID 반환
+            return str(uuid.uuid4())
+    
+    async def update_message(self, message_id: str, response: Dict[str, Any]) -> None:
+        """
+        메시지 업데이트 (응답 저장)
+        
+        Args:
+            message_id: 메시지 ID
+            response: 응답 데이터
+        """
+        try:
+            # 메시지 정보 확인
+            key = f"message:{message_id}"
+            message_data = self.redis.get(key)
+            
+            if not message_data:
+                logger.warning(f"메시지 {message_id}가 존재하지 않습니다.")
+                return
+                
+            message = json.loads(message_data)
+            
+            # 메시지 업데이트
+            message["response"] = response.get("message", "")
+            message["status"] = "completed"
+            message["updated_at"] = time.time()
+            
+            # 태스크 결과 저장
+            if "tasks" in response:
+                message["tasks"] = response["tasks"]
+            
+            # Redis에 메시지 업데이트
+            self.redis.set(key, json.dumps(message))
+            self.redis.expire(key, self.ttl)
+            
+            logger.info(f"메시지 {message_id} 업데이트 완료")
+        except Exception as e:
+            logger.error(f"메시지 업데이트 중 오류: {str(e)}")
+    
+    async def get_message(self, message_id: str) -> Optional[Dict[str, Any]]:
+        """
+        메시지 정보 조회
+        
+        Args:
+            message_id: 메시지 ID
+            
+        Returns:
+            메시지 정보
+        """
+        try:
+            key = f"message:{message_id}"
+            data = self.redis.get(key)
+            
+            if data:
+                return json.loads(data)
+            return None
+        except Exception as e:
+            logger.error(f"메시지 정보 조회 중 오류: {str(e)}")
+            return None
+    
+    async def get_conversation_messages(self, conversation_id: str) -> List[Dict[str, Any]]:
+        """
+        대화에 속한 메시지 목록 조회
+        
+        Args:
+            conversation_id: 대화 ID
+            
+        Returns:
+            메시지 목록
+        """
+        try:
+            # 대화 정보 확인
+            conversation = await self.get_conversation(conversation_id)
+            if not conversation or "messages" not in conversation:
+                return []
+                
+            messages = []
+            for message_id in conversation["messages"]:
+                message = await self.get_message(message_id)
+                if message:
+                    messages.append(message)
+            
+            # 생성 시간순으로 정렬
+            messages.sort(key=lambda x: x.get("created_at", 0))
+            return messages
+        except Exception as e:
+            logger.error(f"대화 메시지 목록 조회 중 오류: {str(e)}")
             return [] 
