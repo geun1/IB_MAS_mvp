@@ -173,33 +173,54 @@ class ContextManager:
             대화 목록 (ID, 상태, 마지막 업데이트 시간 등)
         """
         try:
-            # Redis에서 모든 대화 키 조회
+            # Redis에서 모든 대화 키 조회 (message:* 키는 제외)
             keys = self.redis.keys("conversation:*")
             conversations = []
             
             for key in keys:
                 try:
+                    # conversation: 접두사를 제거하여 ID 추출
                     conversation_id = key.replace("conversation:", "")
-                    conv_data = await self.get_conversation(conversation_id)
                     
-                    if conv_data:
-                        # 요약 정보만 포함
-                        summary = {
-                            "conversation_id": conversation_id,
-                            "status": conv_data.get("status", "unknown"),
-                            "created_at": conv_data.get("created_at", 0),
-                            "updated_at": conv_data.get("updated_at", 0),
-                            "query": conv_data.get("query", ""),
-                            "task_count": len(conv_data.get("tasks", []))
-                        }
-                        conversations.append(summary)
+                    # UUID 형태의 유효한 conversation_id 확인 (메시지 ID와 구분)
+                    is_valid_uuid = False
+                    try:
+                        # UUID 형식으로 변환 시도 (유효한 UUID인지 확인)
+                        uuid_obj = uuid.UUID(conversation_id)
+                        is_valid_uuid = True
+                    except ValueError:
+                        # 임의로 생성된 conversation_id 패턴 확인
+                        # 예: "n3o1mx26qsuvd1saqq2oh"와 같은 형식
+                        if len(conversation_id) > 20:
+                            is_valid_uuid = True
+                    
+                    # 유효한 대화 ID인 경우에만 처리
+                    if is_valid_uuid:
+                        conv_data = await self.get_conversation(conversation_id)
+                        
+                        if conv_data:
+                            # 대화 내용이 있는지 확인 (messages 필드 확인)
+                            has_messages = "messages" in conv_data and len(conv_data.get("messages", [])) > 0
+                            
+                            # 실제 대화가 있는 경우만 포함
+                            if has_messages:
+                                # 요약 정보만 포함
+                                summary = {
+                                    "conversation_id": conversation_id,
+                                    "status": conv_data.get("status", "unknown"),
+                                    "created_at": conv_data.get("created_at", 0),
+                                    "updated_at": conv_data.get("updated_at", 0),
+                                    "query": conv_data.get("query", ""),
+                                    "task_count": len(conv_data.get("tasks", []))
+                                }
+                                conversations.append(summary)
                 except Exception as e:
                     logger.warning(f"대화 {key} 정보 로드 중 오류: {str(e)}")
             
             # 시간 역순 정렬
             conversations.sort(key=lambda x: x.get("created_at", 0), reverse=True)
+            
             return conversations
-        
         except Exception as e:
             logger.error(f"대화 목록 조회 중 오류: {str(e)}")
             return []
@@ -391,13 +412,21 @@ class ContextManager:
             # 이미 존재하는지 확인
             existing = await self.get_message(message_id)
             if existing:
-                logger.warning(f"메시지 ID {message_id}가 이미 존재합니다. 기존 메시지를 반환합니다.")
+                logger.warning(f"메시지 ID {message_id}가 이미 존재합니다.")
+                # 메시지의 대화 ID가 요청된 대화 ID와 일치하는지 확인
+                if existing.get("conversation_id") != conversation_id:
+                    logger.error(f"메시지 ID {message_id}가 다른 대화 ID({existing.get('conversation_id')})에 이미 연결되어 있습니다.")
+                    # 새 메시지 ID 생성
+                    new_message_id = str(uuid.uuid4())
+                    logger.info(f"대화 ID 불일치로 새 메시지 ID 생성: {new_message_id}")
+                    return await self.create_message_with_id(new_message_id, conversation_id, query, user_id)
                 return message_id
             
             # 대화 정보 확인
             conversation = await self.get_conversation(conversation_id)
             if not conversation:
                 # 대화가 없으면 새로 생성
+                logger.warning(f"대화 ID {conversation_id}가 존재하지 않아 새로 생성합니다.")
                 conversation_id = await self.create_conversation(user_id)
                 conversation = await self.get_conversation(conversation_id)
                 
@@ -423,19 +452,31 @@ class ContextManager:
             # 대화 메시지 목록 업데이트
             if "messages" not in conversation:
                 conversation["messages"] = []
-            conversation["messages"].append(message_id)
-            conversation["updated_at"] = timestamp
             
-            # 대화 정보 업데이트
-            conv_key = f"conversation:{conversation_id}"
-            self.redis.set(conv_key, json.dumps(conversation))
-            self.redis.expire(conv_key, self.ttl)
+            # 메시지 ID가 이미 대화에 있는지 확인 (중복 방지)
+            if message_id not in conversation["messages"]:
+                conversation["messages"].append(message_id)
+                conversation["updated_at"] = timestamp
+                
+                # 대화 정보 업데이트
+                conv_key = f"conversation:{conversation_id}"
+                self.redis.set(conv_key, json.dumps(conversation))
+                self.redis.expire(conv_key, self.ttl)
+                
+                logger.info(f"클라이언트 제공 ID로 메시지 생성: {message_id} (대화: {conversation_id})")
+            else:
+                logger.warning(f"메시지 ID {message_id}가 이미 대화 {conversation_id}에 있습니다.")
             
-            logger.info(f"클라이언트 제공 ID로 메시지 생성: {message_id} (대화: {conversation_id})")
             return message_id
         except Exception as e:
             logger.error(f"클라이언트 ID 메시지 생성 중 오류: {str(e)}")
-            return message_id  # 오류가 발생해도 클라이언트 ID 반환
+            # 오류 발생 시 새 ID 생성하여 재시도
+            new_message_id = str(uuid.uuid4())
+            logger.info(f"오류로 인해 새 메시지 ID 생성: {new_message_id}")
+            try:
+                return await self.create_message(conversation_id, query, user_id)
+            except:
+                return new_message_id  # 최후의 수단
     
     async def update_message(self, message_id: str, response: Dict[str, Any]) -> None:
         """
@@ -507,18 +548,41 @@ class ContextManager:
         try:
             # 대화 정보 확인
             conversation = await self.get_conversation(conversation_id)
-            if not conversation or "messages" not in conversation:
+            if not conversation:
+                logger.warning(f"대화 ID {conversation_id}가 존재하지 않습니다.")
                 return []
                 
             messages = []
-            for message_id in conversation["messages"]:
-                message = await self.get_message(message_id)
-                if message:
-                    messages.append(message)
             
-            # 생성 시간순으로 정렬
+            # 대화에 저장된 메시지 ID 목록 가져오기
+            message_ids = []
+            if "messages" in conversation and isinstance(conversation["messages"], list):
+                message_ids = conversation["messages"]
+                logger.info(f"대화 {conversation_id}에 저장된 메시지 ID: {message_ids}")
+            else:
+                logger.warning(f"대화 {conversation_id}에 메시지 목록이 없습니다.")
+                return []
+                
+            # 각 메시지 정보 조회
+            for message_id in message_ids:
+                try:
+                    message = await self.get_message(message_id)
+                    if message:
+                        # 메시지의 대화 ID가 요청된 대화 ID와 일치하는지 확인
+                        if message.get("conversation_id") == conversation_id:
+                            messages.append(message)
+                        else:
+                            logger.warning(f"메시지 ID {message_id}의 대화 ID가 요청된 대화 ID {conversation_id}와 일치하지 않습니다.")
+                    else:
+                        logger.warning(f"메시지 ID {message_id}를 찾을 수 없습니다.")
+                except Exception as e:
+                    logger.error(f"메시지 {message_id} 조회 중 오류 발생: {str(e)}")
+                    continue
+                    
+            # 메시지 생성 시간 순으로 정렬
             messages.sort(key=lambda x: x.get("created_at", 0))
+            
             return messages
         except Exception as e:
-            logger.error(f"대화 메시지 목록 조회 중 오류: {str(e)}")
+            logger.error(f"대화 {conversation_id}의 메시지 목록 조회 중 오류 발생: {str(e)}")
             return [] 

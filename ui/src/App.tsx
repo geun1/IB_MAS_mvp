@@ -23,57 +23,6 @@ const Home: React.FC = () => {
 
     return (
         <div className="relative flex h-[calc(100vh-120px)]">
-            {/* 왼쪽 대화 기록 사이드바 */}
-            <div
-                className={`absolute md:relative left-0 top-0 h-full bg-white z-10 shadow-lg transition-all duration-300 ${
-                    isHistorySidebarOpen ? "w-80" : "w-0 md:w-12"
-                } overflow-hidden`}
-            >
-                <div className="h-full flex flex-col">
-                    {/* 사이드바 토글 버튼 */}
-                    <button
-                        onClick={toggleHistorySidebar}
-                        className="p-2 bg-gray-100 hover:bg-gray-200 text-gray-700 w-full flex justify-center"
-                    >
-                        {isHistorySidebarOpen ? (
-                            <span className="flex items-center">
-                                <svg
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    className="h-5 w-5 mr-2"
-                                    viewBox="0 0 20 20"
-                                    fill="currentColor"
-                                >
-                                    <path
-                                        fillRule="evenodd"
-                                        d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z"
-                                        clipRule="evenodd"
-                                    />
-                                </svg>
-                                대화 기록 닫기
-                            </span>
-                        ) : (
-                            <svg
-                                xmlns="http://www.w3.org/2000/svg"
-                                className="h-5 w-5"
-                                viewBox="0 0 20 20"
-                                fill="currentColor"
-                            >
-                                <path
-                                    fillRule="evenodd"
-                                    d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"
-                                    clipRule="evenodd"
-                                />
-                            </svg>
-                        )}
-                    </button>
-
-                    {/* 대화 기록 컴포넌트 */}
-                    <div className="flex-grow overflow-auto">
-                        {isHistorySidebarOpen && <ConversationList />}
-                    </div>
-                </div>
-            </div>
-
             {/* 가운데 채팅 영역 - 항상 가능한 많은 공간 차지 */}
             <div
                 className={`flex-grow flex flex-col transition-all duration-300 ${

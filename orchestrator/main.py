@@ -86,19 +86,43 @@ async def process_query(request: QueryRequest):
         if not conversation_id:
             # 새 대화 생성
             conversation_id = await app.state.context_manager.create_conversation(request.user_id)
+            logger.info(f"새 대화 ID 생성: {conversation_id}")
+        else:
+            # 대화 ID 유효성 확인
+            existing_conv = await app.state.context_manager.get_conversation(conversation_id)
+            if not existing_conv:
+                logger.warning(f"요청된 대화 ID {conversation_id}가 존재하지 않습니다. 새 대화를 생성합니다.")
+                conversation_id = await app.state.context_manager.create_conversation(request.user_id)
+                logger.info(f"새 대화 ID 생성: {conversation_id}")
         
         # 메시지 ID 확인 또는 생성
         message_id = request.message_id
         if message_id:
-            # 클라이언트가 제공한 메시지 ID 사용
-            logger.info(f"클라이언트에서 제공한 메시지 ID 사용: {message_id}")
-            # 해당 ID로 메시지 생성
-            await app.state.context_manager.create_message_with_id(
-                message_id=message_id,
-                conversation_id=conversation_id,
-                query=request.query,
-                user_id=request.user_id
-            )
+            # 메시지 ID 유효성 먼저 확인
+            existing_msg = await app.state.context_manager.get_message(message_id)
+            if existing_msg:
+                # 기존 메시지가 있는 경우 대화 ID 일치 여부 확인
+                existing_conv_id = existing_msg.get("conversation_id")
+                if existing_conv_id and existing_conv_id != conversation_id:
+                    logger.warning(f"클라이언트에서 제공한 메시지 ID {message_id}가 다른 대화 ID {existing_conv_id}에 이미 연결되어 있습니다.")
+                    logger.info(f"새 메시지 ID를 생성합니다.")
+                    message_id = await app.state.context_manager.create_message(
+                        conversation_id=conversation_id,
+                        query=request.query,
+                        user_id=request.user_id
+                    )
+                else:
+                    logger.info(f"기존 메시지 ID {message_id}를 재사용합니다.")
+            else:
+                # 클라이언트가 제공한 메시지 ID 사용
+                logger.info(f"클라이언트에서 제공한 메시지 ID 사용: {message_id}")
+                # 해당 ID로 메시지 생성
+                message_id = await app.state.context_manager.create_message_with_id(
+                    message_id=message_id,
+                    conversation_id=conversation_id,
+                    query=request.query,
+                    user_id=request.user_id
+                )
         else:
             # 새 메시지 생성
             message_id = await app.state.context_manager.create_message(
@@ -106,6 +130,17 @@ async def process_query(request: QueryRequest):
                 query=request.query,
                 user_id=request.user_id
             )
+            logger.info(f"새 메시지 ID 생성: {message_id}")
+        
+        # 메시지 ID 검증 - 만약 다른 대화 ID에 연결된 메시지 ID라면 오류 반환
+        message = await app.state.context_manager.get_message(message_id)
+        if not message:
+            logger.error(f"생성된 메시지 ID {message_id}를 조회할 수 없습니다.")
+            return {"error": "메시지 생성 오류", "status": "error"}
+        
+        if message.get("conversation_id") != conversation_id:
+            logger.error(f"메시지 ID {message_id}의 대화 ID({message.get('conversation_id')})가 요청 대화 ID({conversation_id})와 일치하지 않습니다.")
+            return {"error": "메시지와 대화 ID 불일치", "status": "error"}
         
         user_id = request.user_id or "익명"
         
@@ -157,6 +192,11 @@ async def process_query(request: QueryRequest):
             # 메시지에도 태스크 분해 결과 저장 (이 부분이 중요)
             message = await app.state.context_manager.get_message(message_id)
             if message:
+                # 메시지의 대화 ID 검증
+                if message.get("conversation_id") != conversation_id:
+                    logger.error(f"메시지 ID {message_id}의 대화 ID({message.get('conversation_id')})가 요청 대화 ID({conversation_id})와 일치하지 않습니다.")
+                    return {"error": "메시지와 대화 ID 불일치", "status": "error"}
+                
                 message["task_descriptions"] = natural_language_tasks
                 message["execution_levels"] = execution_levels
                 message["status"] = "processing"
@@ -732,58 +772,55 @@ async def get_task_decomposition(conversation_id: str, message_id: Optional[str]
             logger.info(f"메시지 ID {message_id}로 태스크 분해 결과 조회 시도")
             message = await app.state.context_manager.get_message(message_id)
             
-            # 메시지가 존재하지 않으면 명확한 에러 반환
             if not message:
-                logger.warning(f"메시지 {message_id}를 찾을 수 없습니다.")
-                return {
-                    "error": f"메시지 {message_id}를 찾을 수 없습니다.",
-                    "conversation_id": conversation_id,
-                    "message_id": message_id
-                }
+                logger.warning(f"메시지 ID {message_id}를 찾을 수 없습니다.")
+                return {"error": f"메시지 ID {message_id}를 찾을 수 없습니다."}
                 
-            # 메시지에 태스크 분해 결과가 있는지 확인
-            if "task_descriptions" in message:
-                logger.info(f"메시지 {message_id}에서 태스크 분해 결과 확인됨")
-                return {
-                    "conversation_id": conversation_id,
-                    "message_id": message_id,
-                    "task_descriptions": message.get("task_descriptions", []),
-                    "execution_levels": message.get("execution_levels", []),
-                    "original_query": message.get("request", "")
-                }
-            else:
-                # 메시지는 존재하지만 태스크 분해 결과가 없는 경우
-                logger.warning(f"메시지 {message_id}에 태스크 분해 결과가 없습니다.")
-                return {
-                    "error": f"메시지 {message_id}의 태스크 분해 결과가 아직 준비되지 않았습니다.",
-                    "conversation_id": conversation_id,
-                    "message_id": message_id,
-                    "status": "pending"
-                }
-        else:
-            # 메시지 ID가 지정되지 않은 경우, 대화의 가장 최근 메시지 결과 반환
-            logger.info(f"대화 ID {conversation_id}의 최신 태스크 분해 결과 조회 시도")
+            # 요청한 대화 ID와 메시지의 대화 ID가 일치하는지 확인
+            msg_conversation_id = message.get("conversation_id")
+            if not msg_conversation_id:
+                logger.warning(f"메시지 {message_id}에 대화 ID 정보가 없습니다.")
+                return {"error": f"메시지 {message_id}에 대화 ID 정보가 없습니다."}
+                
+            if msg_conversation_id != conversation_id:
+                logger.warning(f"메시지 {message_id}의 대화 ID({msg_conversation_id})가 요청된 대화 ID({conversation_id})와 일치하지 않습니다.")
+                return {"error": f"메시지 {message_id}가 대화 {conversation_id}에 속하지 않습니다."}
+                
+            # 대화 목록에 메시지 ID가 있는지 확인
+            if "messages" in conversation and isinstance(conversation["messages"], list):
+                if message_id not in conversation["messages"]:
+                    logger.warning(f"메시지 ID {message_id}가 대화 {conversation_id}의 메시지 목록에 없습니다.")
+                    return {"error": f"메시지 {message_id}가 대화 {conversation_id}에 속하지 않습니다."}
             
-            if "task_descriptions" in conversation:
-                logger.info(f"대화 {conversation_id}에서 태스크 분해 결과 확인됨")
-                return {
-                    "conversation_id": conversation_id,
-                    "task_descriptions": conversation.get("task_descriptions", []),
-                    "execution_levels": conversation.get("execution_levels", []),
-                    "original_query": conversation.get("query", "")
-                }
-            else:
-                logger.warning(f"대화 {conversation_id}에 태스크 분해 결과가 없습니다.")
-                return {
-                    "conversation_id": conversation_id,
-                    "task_descriptions": [],
-                    "execution_levels": [],
-                    "original_query": conversation.get("query", ""),
-                    "status": "pending"
-                }
+            # 태스크 분해 결과 반환
+            return {
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "task_descriptions": message.get("task_descriptions", []),
+                "execution_levels": message.get("execution_levels", []),
+                "original_query": message.get("request", "")
+            }
+        else:
+            # 대화에 속한 가장 최근 메시지 찾기
+            messages = await app.state.context_manager.get_conversation_messages(conversation_id)
+            if not messages:
+                logger.warning(f"대화 {conversation_id}에 메시지가 없습니다.")
+                return {"error": f"대화 {conversation_id}에 메시지가 없습니다."}
+                
+            # 최신 메시지 (마지막으로 생성된 메시지)
+            latest_message = messages[-1]
+            
+            # 태스크 분해 결과 반환
+            return {
+                "conversation_id": conversation_id,
+                "message_id": latest_message.get("id", ""),
+                "task_descriptions": latest_message.get("task_descriptions", []),
+                "execution_levels": latest_message.get("execution_levels", []),
+                "original_query": latest_message.get("request", "")
+            }
     except Exception as e:
-        logger.error(f"태스크 분해 결과 조회 중 오류: {str(e)}")
-        return {"error": f"태스크 분해 결과 조회 중 오류가 발생했습니다: {str(e)}"}
+        logger.error(f"태스크 분해 결과 조회 중 오류 발생: {str(e)}")
+        return {"error": f"태스크 분해 결과 조회 중 오류 발생: {str(e)}"}
 
 # 새로운 API 엔드포인트: 에이전트 태스크 결과 조회
 @app.get("/conversations/{conversation_id}/tasks", tags=["conversation"])
@@ -810,43 +847,51 @@ async def get_agent_tasks(conversation_id: str, message_id: Optional[str] = None
             logger.info(f"메시지 ID {message_id}로 태스크 결과 조회 시도")
             message = await app.state.context_manager.get_message(message_id)
             
-            # 메시지가 존재하지 않으면 명확한 에러 반환
             if not message:
-                logger.warning(f"메시지 {message_id}를 찾을 수 없습니다.")
-                return {
-                    "error": f"메시지 {message_id}를 찾을 수 없습니다.",
-                    "conversation_id": conversation_id,
-                    "message_id": message_id
-                }
+                logger.warning(f"메시지 ID {message_id}를 찾을 수 없습니다.")
+                return {"error": f"메시지 ID {message_id}를 찾을 수 없습니다."}
                 
-            # 메시지에서 태스크 결과 추출
-            if "tasks" in message:
-                logger.info(f"메시지 {message_id}에서 태스크 결과 확인됨: {len(message['tasks'])}개")
-                return {
-                    "conversation_id": conversation_id,
-                    "message_id": message_id,
-                    "tasks": message.get("tasks", [])
-                }
-            else:
-                # 메시지는 존재하지만 태스크 결과가 없는 경우
-                logger.warning(f"메시지 {message_id}에 태스크 결과가 없습니다.")
-                return {
-                    "conversation_id": conversation_id,
-                    "message_id": message_id,
-                    "tasks": [],
-                    "status": "pending"
-                }
-        else:
-            # 메시지 ID가 지정되지 않은 경우, 대화의 모든 태스크 목록 반환
-            logger.info(f"대화 ID {conversation_id}의 모든 태스크 결과 조회 시도")
-            tasks = await app.state.context_manager.get_tasks_by_conversation(conversation_id)
+            # 요청한 대화 ID와 메시지의 대화 ID가 일치하는지 확인
+            msg_conversation_id = message.get("conversation_id")
+            if not msg_conversation_id:
+                logger.warning(f"메시지 {message_id}에 대화 ID 정보가 없습니다.")
+                return {"error": f"메시지 {message_id}에 대화 ID 정보가 없습니다."}
+                
+            if msg_conversation_id != conversation_id:
+                logger.warning(f"메시지 {message_id}의 대화 ID({msg_conversation_id})가 요청된 대화 ID({conversation_id})와 일치하지 않습니다.")
+                return {"error": f"메시지 {message_id}가 대화 {conversation_id}에 속하지 않습니다."}
+            
+            # 대화 목록에 메시지 ID가 있는지 확인
+            if "messages" in conversation and isinstance(conversation["messages"], list):
+                if message_id not in conversation["messages"]:
+                    logger.warning(f"메시지 ID {message_id}가 대화 {conversation_id}의 메시지 목록에 없습니다.")
+                    return {"error": f"메시지 {message_id}가 대화 {conversation_id}에 속하지 않습니다."}
+                
+            # 태스크 결과 반환
             return {
                 "conversation_id": conversation_id,
-                "tasks": tasks
+                "message_id": message_id,
+                "tasks": message.get("tasks", [])
+            }
+        else:
+            # 대화에 속한 가장 최근 메시지 찾기
+            messages = await app.state.context_manager.get_conversation_messages(conversation_id)
+            if not messages:
+                logger.warning(f"대화 {conversation_id}에 메시지가 없습니다.")
+                return {"error": f"대화 {conversation_id}에 메시지가 없습니다."}
+                
+            # 최신 메시지 선택
+            latest_message = messages[-1]
+            
+            # 태스크 결과 반환
+            return {
+                "conversation_id": conversation_id,
+                "message_id": latest_message.get("id", ""),
+                "tasks": latest_message.get("tasks", [])
             }
     except Exception as e:
-        logger.error(f"에이전트 태스크 결과 조회 중 오류: {str(e)}")
-        return {"error": f"에이전트 태스크 결과 조회 중 오류가 발생했습니다: {str(e)}"}
+        logger.error(f"태스크 결과 조회 중 오류 발생: {str(e)}")
+        return {"error": f"태스크 결과 조회 중 오류 발생: {str(e)}"}
 
 # 새로운 API 엔드포인트: 최종 통합 결과 조회
 @app.get("/conversations/{conversation_id}/result", tags=["conversation"])
@@ -873,44 +918,72 @@ async def get_final_result(conversation_id: str, message_id: Optional[str] = Non
             logger.info(f"메시지 ID {message_id}로 최종 결과 조회 시도")
             message = await app.state.context_manager.get_message(message_id)
             
-            # 메시지가 존재하지 않으면 명확한 에러 반환
             if not message:
-                logger.warning(f"메시지 {message_id}를 찾을 수 없습니다.")
-                return {
-                    "error": f"메시지 {message_id}를 찾을 수 없습니다.",
-                    "conversation_id": conversation_id,
-                    "message_id": message_id
-                }
+                logger.warning(f"메시지 ID {message_id}를 찾을 수 없습니다.")
+                return {"error": f"메시지 ID {message_id}를 찾을 수 없습니다."}
                 
-            # 메시지에 응답이 있는지 확인
-            if "response" in message and message["response"]:
-                logger.info(f"메시지 {message_id}에서 최종 결과 확인됨")
+            # 요청한 대화 ID와 메시지의 대화 ID가 일치하는지 확인
+            msg_conversation_id = message.get("conversation_id")
+            if not msg_conversation_id:
+                logger.warning(f"메시지 {message_id}에 대화 ID 정보가 없습니다.")
+                return {"error": f"메시지 {message_id}에 대화 ID 정보가 없습니다."}
+                
+            if msg_conversation_id != conversation_id:
+                logger.warning(f"메시지 {message_id}의 대화 ID({msg_conversation_id})가 요청된 대화 ID({conversation_id})와 일치하지 않습니다.")
+                return {"error": f"메시지 {message_id}가 대화 {conversation_id}에 속하지 않습니다."}
+            
+            # 대화 목록에 메시지 ID가 있는지 확인
+            if "messages" in conversation and isinstance(conversation["messages"], list):
+                if message_id not in conversation["messages"]:
+                    logger.warning(f"메시지 ID {message_id}가 대화 {conversation_id}의 메시지 목록에 없습니다.")
+                    return {"error": f"메시지 {message_id}가 대화 {conversation_id}에 속하지 않습니다."}
+                
+            # 최종 결과 반환
+            return {
+                "conversation_id": conversation_id,
+                "message_id": message_id,
+                "message": message.get("response", ""),
+                "status": message.get("status", "pending")
+            }
+        else:
+            # 대화에 속한 가장 최근 메시지 찾기
+            messages = await app.state.context_manager.get_conversation_messages(conversation_id)
+            if not messages:
+                logger.warning(f"대화 {conversation_id}에 메시지가 없습니다.")
+                return {"error": f"대화 {conversation_id}에 메시지가 없습니다."}
+                
+            # 최신 메시지 중에서 완료된 메시지 찾기
+            completed_messages = [m for m in messages if m.get("status") == "completed" and "response" in m]
+            
+            if completed_messages:
+                # 가장 최근 완료된 메시지 선택
+                latest_completed = completed_messages[-1]
                 return {
                     "conversation_id": conversation_id,
-                    "message_id": message_id,
-                    "message": message.get("response", ""),
+                    "message_id": latest_completed.get("id", ""),
+                    "message": latest_completed.get("response", ""),
                     "status": "completed"
                 }
             else:
-                # 메시지는 존재하지만 최종 결과가 없는 경우
-                logger.warning(f"메시지 {message_id}에 최종 결과가 없습니다.")
-                return {
-                    "error": f"메시지 {message_id}의 최종 결과가 아직 준비되지 않았습니다.",
-                    "conversation_id": conversation_id,
-                    "message_id": message_id,
-                    "status": "pending"
-                }
-        else:
-            # 메시지 ID가 지정되지 않은 경우, 대화의 최종 결과 반환
-            logger.info(f"대화 ID {conversation_id}의 최종 결과 조회 시도")
-            return {
-                "conversation_id": conversation_id,
-                "message": conversation.get("message", ""),
-                "status": conversation.get("status", "pending")
-            }
+                # 완료된 메시지가 없는 경우
+                if messages:
+                    latest_message = messages[-1]
+                    return {
+                        "conversation_id": conversation_id,
+                        "message_id": latest_message.get("id", ""),
+                        "message": "",
+                        "status": latest_message.get("status", "pending")
+                    }
+                else:
+                    return {
+                        "conversation_id": conversation_id,
+                        "message_id": "",
+                        "message": "",
+                        "status": "pending"
+                    }
     except Exception as e:
-        logger.error(f"최종 결과 조회 중 오류: {str(e)}")
-        return {"error": f"최종 결과 조회 중 오류가 발생했습니다: {str(e)}"}
+        logger.error(f"최종 결과 조회 중 오류 발생: {str(e)}")
+        return {"error": f"최종 결과 조회 중 오류 발생: {str(e)}"}
 
 @app.get("/conversations/{conversation_id}/messages", tags=["conversation"])
 async def get_conversation_messages(conversation_id: str):
@@ -925,25 +998,94 @@ async def get_conversation_messages(conversation_id: str):
     """
     try:
         if not app.state.context_manager:
+            logger.error("컨텍스트 관리자가 초기화되지 않았습니다.")
             return {"error": "컨텍스트 관리자가 초기화되지 않았습니다."}
             
-        # 대화에 속한 메시지 목록 조회
-        messages = await app.state.context_manager.get_conversation_messages(conversation_id)
-        
-        if not messages:
+        # 먼저 대화 데이터 확인
+        conversation = await app.state.context_manager.get_conversation(conversation_id)
+        if not conversation:
+            logger.warning(f"대화 ID {conversation_id}를 찾을 수 없습니다.")
             return {
                 "conversation_id": conversation_id,
                 "messages": []
             }
-            
-        # 메시지 목록 반환
+        
+        # 대화에 속한 메시지 목록 조회
+        messages = await app.state.context_manager.get_conversation_messages(conversation_id)
+        
+        logger.info(f"대화 {conversation_id}에서 {len(messages)}개의 메시지를 조회했습니다.")
         return {
             "conversation_id": conversation_id,
             "messages": messages
         }
     except Exception as e:
-        logger.error(f"대화 메시지 목록 조회 중 오류: {str(e)}")
-        return {"error": f"대화 메시지 목록 조회 중 오류: {str(e)}"}
+        logger.error(f"대화 {conversation_id}의 메시지 목록 조회 중 오류 발생: {str(e)}")
+        return {"error": f"메시지 목록 조회 중 오류 발생: {str(e)}"}
+
+@app.post("/new_conversation", tags=["conversation"])
+async def create_new_conversation(request: QueryRequest, background_tasks: BackgroundTasks):
+    """
+    새 대화를 생성하고 첫 메시지를 추가하는 API 엔드포인트
+    
+    Args:
+        request: 쿼리 요청 (conversation_id는 무시됨)
+        background_tasks: 백그라운드 작업 처리를 위한 객체
+    
+    Returns:
+        새 대화 ID, 메시지 ID 및 상태
+    """
+    try:
+        # 새 대화 ID 생성
+        conversation_id = await app.state.context_manager.create_conversation(request.user_id)
+        logger.info(f"새 대화 ID 생성: {conversation_id}")
+        
+        # 대화에 첫 메시지 추가
+        message_id = await app.state.context_manager.create_message(
+            conversation_id=conversation_id,
+            query=request.query,
+            user_id=request.user_id
+        )
+        logger.info(f"새 메시지 ID 생성: {message_id}")
+        
+        # 요청 쿼리 처리 시작
+        # process_query와 동일한 로직으로 태스크 처리 시작
+        background_tasks.add_task(
+            process_query_background,
+            request=QueryRequest(
+                query=request.query,
+                conversation_id=conversation_id,
+                message_id=message_id,
+                user_id=request.user_id,
+                disabled_agents=request.disabled_agents
+            )
+        )
+        
+        # 즉시 응답 반환 (백그라운드 태스크를 포함하여)
+        return {
+            "conversation_id": conversation_id,
+            "message_id": message_id,
+            "status": "success",
+            "message": "새 대화가 성공적으로 생성되었습니다."
+        }
+    except Exception as e:
+        logger.error(f"새 대화 생성 중 오류 발생: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"새 대화 생성 중 오류 발생: {str(e)}", "status": "error"}
+        )
+
+async def process_query_background(request: QueryRequest):
+    """
+    백그라운드에서 쿼리를 처리하는 함수
+    
+    Args:
+        request: 쿼리 요청
+    """
+    try:
+        # process_query 엔드포인트의 로직을 복제하여 백그라운드에서 실행
+        await process_query(request)
+    except Exception as e:
+        logger.error(f"백그라운드 쿼리 처리 중 오류 발생: {str(e)}")
 
 # 서버 실행 (직접 실행 시)
 if __name__ == "__main__":
