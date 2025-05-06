@@ -1,10 +1,17 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useQuery } from "react-query";
 import { orchestratorApi } from "../api/orchestrator";
 import { format } from "date-fns";
+import ReactMarkdown from "react-markdown";
+import {
+    ConversationListItem,
+    ConversationDetail,
+    Message,
+} from "../types/messages";
 
 const ConversationList: React.FC = () => {
     const [selectedId, setSelectedId] = useState<string | null>(null);
+    const [activeTab, setActiveTab] = useState<"detail" | "messages">("detail");
 
     // 대화 목록 조회
     const {
@@ -12,14 +19,28 @@ const ConversationList: React.FC = () => {
         isLoading,
         isError,
         refetch,
-    } = useQuery("conversations", orchestratorApi.listConversations, {
-        refetchInterval: 10000,
-    });
+    } = useQuery<ConversationListItem[]>(
+        "conversations",
+        orchestratorApi.listConversations,
+        {
+            refetchInterval: 10000,
+        }
+    );
 
     // 대화 상세 정보 조회
-    const { data: detail, isLoading: isDetailLoading } = useQuery(
-        ["conversationDetail", selectedId],
-        () => orchestratorApi.getConversationDetail(selectedId || ""),
+    const { data: detail, isLoading: isDetailLoading } =
+        useQuery<ConversationDetail>(
+            ["conversationDetail", selectedId],
+            () => orchestratorApi.getConversationDetail(selectedId || ""),
+            { enabled: !!selectedId }
+        );
+
+    // 대화 메시지 목록 조회
+    const { data: messages, isLoading: isMessagesLoading } = useQuery<
+        Message[]
+    >(
+        ["conversationMessages", selectedId],
+        () => orchestratorApi.getConversationMessages(selectedId || ""),
         { enabled: !!selectedId }
     );
 
@@ -64,7 +85,7 @@ const ConversationList: React.FC = () => {
                 <div className="text-red-500 py-4">
                     대화 목록을 불러오는 중 오류가 발생했습니다.
                 </div>
-            ) : conversations?.length === 0 ? (
+            ) : !conversations || conversations.length === 0 ? (
                 <div className="text-gray-500 py-4">대화 내역이 없습니다.</div>
             ) : (
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -74,7 +95,7 @@ const ConversationList: React.FC = () => {
                             최근 대화 목록
                         </div>
                         <div className="divide-y max-h-[500px] overflow-auto">
-                            {conversations?.map((conv) => (
+                            {conversations.map((conv) => (
                                 <div
                                     key={conv.conversation_id}
                                     className={`px-4 py-3 cursor-pointer hover:bg-gray-50 ${
@@ -82,9 +103,10 @@ const ConversationList: React.FC = () => {
                                             ? "bg-blue-50"
                                             : ""
                                     }`}
-                                    onClick={() =>
-                                        setSelectedId(conv.conversation_id)
-                                    }
+                                    onClick={() => {
+                                        setSelectedId(conv.conversation_id);
+                                        setActiveTab("detail"); // 기본 탭을 상세 정보로 설정
+                                    }}
                                 >
                                     <div className="font-medium truncate">
                                         {conv.query || "제목 없음"}
@@ -124,209 +146,341 @@ const ConversationList: React.FC = () => {
                             <div className="p-8 text-center text-gray-500">
                                 왼쪽 목록에서 대화를 선택하세요
                             </div>
-                        ) : isDetailLoading ? (
-                            <div className="p-8 text-center">
-                                <div className="animate-spin inline-block w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full"></div>
-                                <div className="mt-2">상세 정보 로딩 중...</div>
-                            </div>
-                        ) : !detail ? (
-                            <div className="p-8 text-center text-red-500">
-                                대화 정보를 불러올 수 없습니다
-                            </div>
                         ) : (
                             <div>
                                 {/* 대화 헤더 */}
                                 <div className="bg-gray-100 px-4 py-3 border-b">
                                     <h3 className="font-semibold">
-                                        {detail.query || "제목 없음"}
+                                        {detail?.query || "제목 없음"}
                                     </h3>
                                     <div className="flex justify-between text-sm mt-1">
-                                        <span>
-                                            ID: {detail.conversation_id}
-                                        </span>
+                                        <span>ID: {selectedId}</span>
                                         <span>
                                             생성:{" "}
-                                            {formatTime(detail.created_at)}
+                                            {detail?.created_at
+                                                ? formatTime(detail.created_at)
+                                                : "-"}
                                         </span>
                                     </div>
                                 </div>
 
+                                {/* 탭 메뉴 */}
+                                <div className="flex border-b">
+                                    <button
+                                        className={`px-4 py-2 text-sm font-medium ${
+                                            activeTab === "detail"
+                                                ? "border-b-2 border-blue-500 text-blue-600"
+                                                : "text-gray-500 hover:text-gray-700"
+                                        }`}
+                                        onClick={() => setActiveTab("detail")}
+                                    >
+                                        통합 결과
+                                    </button>
+                                    <button
+                                        className={`px-4 py-2 text-sm font-medium ${
+                                            activeTab === "messages"
+                                                ? "border-b-2 border-blue-500 text-blue-600"
+                                                : "text-gray-500 hover:text-gray-700"
+                                        }`}
+                                        onClick={() => setActiveTab("messages")}
+                                    >
+                                        메시지 기록
+                                    </button>
+                                </div>
+
                                 {/* 대화 내용 */}
                                 <div className="p-4 max-h-[600px] overflow-auto">
-                                    {/* 통합 결과 */}
-                                    <div className="mb-6">
-                                        <h4 className="font-semibold text-lg border-b pb-2 mb-3">
-                                            통합 결과
-                                        </h4>
-                                        <div className="whitespace-pre-wrap bg-gray-50 p-4 rounded">
-                                            {detail.message ||
-                                                "결과가 없습니다."}
-                                        </div>
-                                    </div>
+                                    {activeTab === "detail" ? (
+                                        // 통합 결과 탭
+                                        isDetailLoading ? (
+                                            <div className="p-8 text-center">
+                                                <div className="animate-spin inline-block w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full"></div>
+                                                <div className="mt-2">
+                                                    상세 정보 로딩 중...
+                                                </div>
+                                            </div>
+                                        ) : !detail ? (
+                                            <div className="p-8 text-center text-red-500">
+                                                대화 정보를 불러올 수 없습니다
+                                            </div>
+                                        ) : (
+                                            <div>
+                                                {/* 통합 결과 */}
+                                                <div className="mb-6">
+                                                    <h4 className="font-semibold text-lg border-b pb-2 mb-3">
+                                                        통합 결과
+                                                    </h4>
+                                                    <div className="whitespace-pre-wrap bg-gray-50 p-4 rounded">
+                                                        {detail.message ||
+                                                            "결과가 없습니다."}
+                                                    </div>
+                                                </div>
 
-                                    {/* 에이전트별 결과 */}
-                                    <div className="mb-6">
-                                        <h4 className="font-semibold text-lg border-b pb-2 mb-3">
-                                            에이전트별 결과 (
-                                            {detail.tasks?.length || 0}개)
-                                        </h4>
-                                        <div className="space-y-4">
-                                            {detail.tasks?.map(
-                                                (task: any, index: number) => (
-                                                    <div
-                                                        key={index}
-                                                        className="border rounded-lg overflow-hidden"
-                                                    >
-                                                        <div className="bg-gray-50 px-4 py-2 flex justify-between items-center">
-                                                            <div>
-                                                                <span className="font-medium">
-                                                                    {task.role ||
-                                                                        "알 수 없는 태스크"}
-                                                                </span>
-                                                                <span
-                                                                    className={`ml-2 px-2 py-0.5 text-xs rounded-full ${
-                                                                        task.status ===
-                                                                        "completed"
-                                                                            ? "bg-green-100 text-green-800"
-                                                                            : "bg-gray-100 text-gray-800"
-                                                                    }`}
+                                                {/* 에이전트별 결과 */}
+                                                <div className="mb-6">
+                                                    <h4 className="font-semibold text-lg border-b pb-2 mb-3">
+                                                        에이전트별 결과 (
+                                                        {detail.tasks?.length ||
+                                                            0}
+                                                        개)
+                                                    </h4>
+                                                    <div className="space-y-4">
+                                                        {detail.tasks?.map(
+                                                            (
+                                                                task: any,
+                                                                index: number
+                                                            ) => (
+                                                                <div
+                                                                    key={index}
+                                                                    className="border rounded-lg overflow-hidden"
                                                                 >
-                                                                    {
-                                                                        task.status
-                                                                    }
-                                                                </span>
-                                                            </div>
-                                                            <div className="text-sm text-gray-500">
-                                                                {task.completed_at
-                                                                    ? formatTime(
-                                                                          task.completed_at
-                                                                      )
-                                                                    : "-"}
-                                                            </div>
-                                                        </div>
-                                                        <div className="p-3 text-sm">
-                                                            <div className="mb-2">
-                                                                <span className="font-medium">
-                                                                    태스크 ID:
-                                                                </span>{" "}
-                                                                {extractTaskId(
-                                                                    task
-                                                                )}
-                                                            </div>
-                                                            <div className="mb-2">
-                                                                <span className="font-medium">
-                                                                    설명:
-                                                                </span>{" "}
-                                                                {task.description ||
-                                                                    "설명 없음"}
-                                                            </div>
-                                                            {task.result && (
-                                                                <div>
-                                                                    <div className="font-medium mb-1">
-                                                                        결과:
+                                                                    <div className="bg-gray-50 px-4 py-2 flex justify-between items-center">
+                                                                        <div>
+                                                                            <span className="font-medium">
+                                                                                {task.role ||
+                                                                                    "알 수 없는 태스크"}
+                                                                            </span>
+                                                                            <span
+                                                                                className={`ml-2 px-2 py-0.5 text-xs rounded-full ${
+                                                                                    task.status ===
+                                                                                    "completed"
+                                                                                        ? "bg-green-100 text-green-800"
+                                                                                        : "bg-gray-100 text-gray-800"
+                                                                                }`}
+                                                                            >
+                                                                                {
+                                                                                    task.status
+                                                                                }
+                                                                            </span>
+                                                                        </div>
+                                                                        <div className="text-sm text-gray-500">
+                                                                            {task.completed_at
+                                                                                ? formatTime(
+                                                                                      task.completed_at
+                                                                                  )
+                                                                                : "-"}
+                                                                        </div>
                                                                     </div>
-                                                                    {typeof task.result ===
-                                                                        "object" &&
-                                                                    task.result
-                                                                        .data ? (
-                                                                        // stock_data_agent 타입의 결과 처리 (data 객체)
-                                                                        <pre className="whitespace-pre-wrap bg-gray-50 p-3 rounded text-sm overflow-x-auto">
-                                                                            {JSON.stringify(
+                                                                    <div className="p-3 text-sm">
+                                                                        <div className="mb-2">
+                                                                            <span className="font-medium">
+                                                                                태스크
+                                                                                ID:
+                                                                            </span>{" "}
+                                                                            {extractTaskId(
                                                                                 task
-                                                                                    .result
-                                                                                    .data,
-                                                                                null,
-                                                                                2
                                                                             )}
-                                                                        </pre>
-                                                                    ) : typeof task.result ===
-                                                                          "object" &&
-                                                                      task
-                                                                          .result
-                                                                          .result &&
-                                                                      task
-                                                                          .result
-                                                                          .result
-                                                                          .content ? (
-                                                                        // 중첩 구조: result.result.content
-                                                                        <div className="whitespace-pre-wrap bg-gray-50 p-3 rounded text-sm">
-                                                                            {
+                                                                        </div>
+                                                                        <div className="mb-2">
+                                                                            <span className="font-medium">
+                                                                                설명:
+                                                                            </span>{" "}
+                                                                            {task.description ||
+                                                                                "설명 없음"}
+                                                                        </div>
+                                                                        {task.result && (
+                                                                            <div>
+                                                                                <div className="font-medium mb-1">
+                                                                                    결과:
+                                                                                </div>
+                                                                                {typeof task.result ===
+                                                                                    "object" &&
                                                                                 task
                                                                                     .result
-                                                                                    .result
-                                                                                    .content
-                                                                            }
+                                                                                    .data ? (
+                                                                                    // stock_data_agent 타입의 결과 처리 (data 객체)
+                                                                                    <pre className="whitespace-pre-wrap bg-gray-50 p-3 rounded text-sm overflow-x-auto">
+                                                                                        {JSON.stringify(
+                                                                                            task
+                                                                                                .result
+                                                                                                .data,
+                                                                                            null,
+                                                                                            2
+                                                                                        )}
+                                                                                    </pre>
+                                                                                ) : typeof task.result ===
+                                                                                      "object" &&
+                                                                                  task
+                                                                                      .result
+                                                                                      .result &&
+                                                                                  task
+                                                                                      .result
+                                                                                      .result
+                                                                                      .content ? (
+                                                                                    // 중첩 구조: result.result.content
+                                                                                    <div className="whitespace-pre-wrap bg-gray-50 p-3 rounded text-sm">
+                                                                                        {
+                                                                                            task
+                                                                                                .result
+                                                                                                .result
+                                                                                                .content
+                                                                                        }
+                                                                                    </div>
+                                                                                ) : typeof task.result ===
+                                                                                      "object" &&
+                                                                                  task
+                                                                                      .result
+                                                                                      .result &&
+                                                                                  task
+                                                                                      .result
+                                                                                      .result
+                                                                                      .message ? (
+                                                                                    // 중첩 구조: result.result.message
+                                                                                    <div className="whitespace-pre-wrap bg-gray-50 p-3 rounded text-sm">
+                                                                                        {
+                                                                                            task
+                                                                                                .result
+                                                                                                .result
+                                                                                                .message
+                                                                                        }
+                                                                                    </div>
+                                                                                ) : typeof task.result ===
+                                                                                      "object" &&
+                                                                                  task
+                                                                                      .result
+                                                                                      .content ? (
+                                                                                    // 중첩 구조: result.content
+                                                                                    <div className="whitespace-pre-wrap bg-gray-50 p-3 rounded text-sm">
+                                                                                        {
+                                                                                            task
+                                                                                                .result
+                                                                                                .content
+                                                                                        }
+                                                                                    </div>
+                                                                                ) : typeof task.result ===
+                                                                                      "object" &&
+                                                                                  task
+                                                                                      .result
+                                                                                      .message ? (
+                                                                                    // 중첩 구조: result.message
+                                                                                    <div className="whitespace-pre-wrap bg-gray-50 p-3 rounded text-sm">
+                                                                                        {
+                                                                                            task
+                                                                                                .result
+                                                                                                .message
+                                                                                        }
+                                                                                    </div>
+                                                                                ) : typeof task.result ===
+                                                                                  "string" ? (
+                                                                                    // 문자열 결과
+                                                                                    <div className="whitespace-pre-wrap bg-gray-50 p-3 rounded text-sm">
+                                                                                        {
+                                                                                            task.result
+                                                                                        }
+                                                                                    </div>
+                                                                                ) : (
+                                                                                    // 기타 객체 형태의 결과는 JSON으로 표시
+                                                                                    <pre className="whitespace-pre-wrap bg-gray-50 p-3 rounded text-sm overflow-x-auto">
+                                                                                        {JSON.stringify(
+                                                                                            task.result,
+                                                                                            null,
+                                                                                            2
+                                                                                        )}
+                                                                                    </pre>
+                                                                                )}
+                                                                            </div>
+                                                                        )}
+                                                                    </div>
+                                                                </div>
+                                                            )
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )
+                                    ) : // 메시지 기록 탭
+                                    isMessagesLoading ? (
+                                        <div className="p-8 text-center">
+                                            <div className="animate-spin inline-block w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full"></div>
+                                            <div className="mt-2">
+                                                메시지 기록 로딩 중...
+                                            </div>
+                                        </div>
+                                    ) : !messages || messages.length === 0 ? (
+                                        <div className="p-8 text-center text-gray-500">
+                                            메시지 기록이 없습니다
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-6">
+                                            <h4 className="font-semibold text-lg border-b pb-2">
+                                                대화 기록 ({messages.length}개
+                                                메시지)
+                                            </h4>
+
+                                            <div className="space-y-4">
+                                                {messages.map(
+                                                    (message, index) => (
+                                                        <div
+                                                            key={index}
+                                                            className="border rounded-lg overflow-hidden"
+                                                        >
+                                                            <div className="bg-gray-50 px-4 py-2 flex justify-between items-center">
+                                                                <div className="font-medium">
+                                                                    {message.id
+                                                                        ? `메시지 ID: ${message.id.substring(
+                                                                              0,
+                                                                              8
+                                                                          )}...`
+                                                                        : "메시지"}
+                                                                </div>
+                                                                <div className="text-sm text-gray-500">
+                                                                    {message.created_at
+                                                                        ? formatTime(
+                                                                              message.created_at
+                                                                          )
+                                                                        : message.timestamp
+                                                                        ? message.timestamp.toLocaleString()
+                                                                        : "-"}
+                                                                </div>
+                                                            </div>
+                                                            <div className="p-4">
+                                                                <div className="mb-3 grid grid-cols-1 md:grid-cols-2 gap-4">
+                                                                    <div>
+                                                                        <h5 className="text-sm font-medium text-gray-700 mb-1">
+                                                                            요청:
+                                                                        </h5>
+                                                                        <div className="bg-gray-50 p-3 rounded text-sm whitespace-pre-wrap">
+                                                                            {message.request ||
+                                                                                message.content ||
+                                                                                "요청 내용 없음"}
                                                                         </div>
-                                                                    ) : typeof task.result ===
-                                                                          "object" &&
-                                                                      task
-                                                                          .result
-                                                                          .result &&
-                                                                      task
-                                                                          .result
-                                                                          .result
-                                                                          .message ? (
-                                                                        // 중첩 구조: result.result.message
-                                                                        <div className="whitespace-pre-wrap bg-gray-50 p-3 rounded text-sm">
-                                                                            {
-                                                                                task
-                                                                                    .result
-                                                                                    .result
-                                                                                    .message
-                                                                            }
+                                                                    </div>
+                                                                    {(message.response ||
+                                                                        message.role ===
+                                                                            "assistant") && (
+                                                                        <div>
+                                                                            <h5 className="text-sm font-medium text-gray-700 mb-1">
+                                                                                응답:
+                                                                            </h5>
+                                                                            <div className="bg-gray-50 p-3 rounded text-sm whitespace-pre-wrap">
+                                                                                <ReactMarkdown>
+                                                                                    {message.response ||
+                                                                                        message.content ||
+                                                                                        "응답 내용 없음"}
+                                                                                </ReactMarkdown>
+                                                                            </div>
                                                                         </div>
-                                                                    ) : typeof task.result ===
-                                                                          "object" &&
-                                                                      task
-                                                                          .result
-                                                                          .content ? (
-                                                                        // 중첩 구조: result.content
-                                                                        <div className="whitespace-pre-wrap bg-gray-50 p-3 rounded text-sm">
-                                                                            {
-                                                                                task
-                                                                                    .result
-                                                                                    .content
-                                                                            }
-                                                                        </div>
-                                                                    ) : typeof task.result ===
-                                                                          "object" &&
-                                                                      task
-                                                                          .result
-                                                                          .message ? (
-                                                                        // 중첩 구조: result.message
-                                                                        <div className="whitespace-pre-wrap bg-gray-50 p-3 rounded text-sm">
-                                                                            {
-                                                                                task
-                                                                                    .result
-                                                                                    .message
-                                                                            }
-                                                                        </div>
-                                                                    ) : typeof task.result ===
-                                                                      "string" ? (
-                                                                        // 문자열 결과
-                                                                        <div className="whitespace-pre-wrap bg-gray-50 p-3 rounded text-sm">
-                                                                            {
-                                                                                task.result
-                                                                            }
-                                                                        </div>
-                                                                    ) : (
-                                                                        // 기타 객체 형태의 결과는 JSON으로 표시
-                                                                        <pre className="whitespace-pre-wrap bg-gray-50 p-3 rounded text-sm overflow-x-auto">
-                                                                            {JSON.stringify(
-                                                                                task.result,
-                                                                                null,
-                                                                                2
-                                                                            )}
-                                                                        </pre>
                                                                     )}
                                                                 </div>
-                                                            )}
+                                                                <div className="flex justify-between text-xs text-gray-500 mt-2">
+                                                                    <span>
+                                                                        상태:{" "}
+                                                                        {message.status ||
+                                                                            "완료"}
+                                                                    </span>
+                                                                    <span>
+                                                                        유형:{" "}
+                                                                        {message.role ||
+                                                                            "사용자"}
+                                                                    </span>
+                                                                </div>
+                                                            </div>
                                                         </div>
-                                                    </div>
-                                                )
-                                            )}
+                                                    )
+                                                )}
+                                            </div>
                                         </div>
-                                    </div>
+                                    )}
                                 </div>
                             </div>
                         )}

@@ -786,6 +786,39 @@ async def get_final_result(conversation_id: str, message_id: Optional[str] = Non
         logger.error(f"최종 결과 조회 중 오류: {str(e)}")
         return {"error": f"최종 결과 조회 중 오류가 발생했습니다: {str(e)}"}
 
+@app.get("/conversations/{conversation_id}/messages", tags=["conversation"])
+async def get_conversation_messages(conversation_id: str):
+    """
+    대화에 속한 메시지 목록 조회 API
+    
+    Args:
+        conversation_id: 대화 ID
+        
+    Returns:
+        메시지 목록
+    """
+    try:
+        if not app.state.context_manager:
+            return {"error": "컨텍스트 관리자가 초기화되지 않았습니다."}
+            
+        # 대화에 속한 메시지 목록 조회
+        messages = await app.state.context_manager.get_conversation_messages(conversation_id)
+        
+        if not messages:
+            return {
+                "conversation_id": conversation_id,
+                "messages": []
+            }
+            
+        # 메시지 목록 반환
+        return {
+            "conversation_id": conversation_id,
+            "messages": messages
+        }
+    except Exception as e:
+        logger.error(f"대화 메시지 목록 조회 중 오류: {str(e)}")
+        return {"error": f"대화 메시지 목록 조회 중 오류: {str(e)}"}
+
 # 서버 실행 (직접 실행 시)
 if __name__ == "__main__":
     import uvicorn

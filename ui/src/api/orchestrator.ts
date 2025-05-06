@@ -57,26 +57,42 @@ export const orchestratorApi = {
         }
     },
 
-    // 대화 목록 조회 API
-    getConversations: async () => {
+    // 대화 목록 조회 API (ConversationList에서 사용 - listConversations로 별칭)
+    listConversations: async () => {
         try {
             const response = await apiClient.get(`${BASE_URL}/conversations`);
-            return response.data;
+            return response.data.conversations || [];
         } catch (error) {
             console.error("대화 목록 조회 오류:", error);
             throw error;
         }
     },
 
-    // 대화 내역 조회 API
-    getConversation: async (conversationId: string) => {
+    // 대화 상세 정보 조회 API (ConversationList에서 사용)
+    getConversationDetail: async (conversationId: string) => {
         try {
+            // 대화 정보 가져오기
             const response = await apiClient.get(
                 `${BASE_URL}/conversations/${conversationId}`
             );
+
             return response.data;
         } catch (error) {
-            console.error("대화 내역 조회 오류:", error);
+            console.error("대화 상세 정보 조회 오류:", error);
+            throw error;
+        }
+    },
+
+    // 대화에 속한 메시지 목록 조회 API
+    getConversationMessages: async (conversationId: string) => {
+        try {
+            // 대화에 속한 메시지 목록 조회
+            const response = await apiClient.get(
+                `${BASE_URL}/conversations/${conversationId}/messages`
+            );
+            return response.data.messages || [];
+        } catch (error) {
+            console.error("대화 메시지 목록 조회 오류:", error);
             throw error;
         }
     },

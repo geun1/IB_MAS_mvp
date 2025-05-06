@@ -1,64 +1,61 @@
-// 기본 메시지 타입
+// 메시지 타입 정의
 export interface Message {
-    role: "user" | "assistant" | "system";
+    id?: string;
+    role: string;
     content: string;
     timestamp: Date;
     conversationId?: string;
-    taskId?: string;
     finalResult?: boolean;
+    request?: string;
+    response?: string;
+    created_at?: number;
+    updated_at?: number;
+    status?: string;
 }
 
-// 처리 과정 메시지 타입
+// 대화 처리 메시지 타입
 export interface ProcessMessage extends Message {
-    // 처리 단계 타입
-    processType: "task_split" | "agent_processing" | "agent_result";
-    // 태스크 ID (에이전트 처리 시)
-    taskId?: string;
-    // 에이전트 역할명
-    agentRole?: string;
-    // 처리 상태
-    status?: "pending" | "processing" | "completed" | "failed";
-    // 태스크 인덱스 (분해된 순서)
-    taskIndex?: number;
-    // 태스크 설명
+    type: "task_split" | "agent_result" | "integration";
     taskDescription?: string;
+    taskIndex?: number;
+    status?: string;
 }
 
-// 태스크 정보
+// 태스크 정보 타입
 export interface TaskInfo {
     id: string;
+    role: string;
+    description: string;
     status: string;
-    description?: string;
-    role?: string;
     result?: any;
-    // 태스크 인덱스 (업무 분할 순서)
-    index?: number;
-    // 태스크 의존성 (어떤 태스크에 의존하는지)
-    depends_on?: string[];
-    // 태스크 레벨 (실행 순서)
-    level?: number;
-    // 태스크 시작 시간
-    created_at?: number;
-    // 태스크 완료 시간
-    completed_at?: number;
 }
 
 // 대화 상태 타입
-export interface ConversationStatus {
+export enum ConversationStatus {
+    PENDING = "pending",
+    PROCESSING = "processing",
+    COMPLETED = "completed",
+    FAILED = "failed",
+}
+
+// 대화 목록 아이템 타입
+export interface ConversationListItem {
     conversation_id: string;
     status: string;
-    tasks: TaskInfo[];
-    message?: string;
-    // 태스크 분해 결과
-    taskDecomposition?: {
-        original_query: string;
-        tasks: Array<{
-            description: string;
-            role: string;
-            index: number;
-            level?: number;
-        }>;
-    };
-    // 실행 레벨 (태스크 실행 순서)
-    execution_levels?: number[][];
+    created_at: number;
+    updated_at: number;
+    query: string;
+    task_count: number;
+    messages?: Message[];
+}
+
+// 대화 상세 정보 타입
+export interface ConversationDetail {
+    conversation_id: string;
+    status: string;
+    tasks: any[];
+    message: string;
+    created_at?: number;
+    updated_at?: number;
+    query?: string;
 }
