@@ -6,6 +6,7 @@ import logging
 import time
 import uuid
 import secrets
+import json
 from typing import Dict, List, Optional, Any
 from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
@@ -86,9 +87,19 @@ async def process_query(request: QueryRequest):
             # 새 대화 생성
             conversation_id = await app.state.context_manager.create_conversation(request.user_id)
         
-        # 메시지 ID 생성
+        # 메시지 ID 확인 또는 생성
         message_id = request.message_id
-        if not message_id:
+        if message_id:
+            # 클라이언트가 제공한 메시지 ID 사용
+            logger.info(f"클라이언트에서 제공한 메시지 ID 사용: {message_id}")
+            # 해당 ID로 메시지 생성
+            await app.state.context_manager.create_message_with_id(
+                message_id=message_id,
+                conversation_id=conversation_id,
+                query=request.query,
+                user_id=request.user_id
+            )
+        else:
             # 새 메시지 생성
             message_id = await app.state.context_manager.create_message(
                 conversation_id=conversation_id,
@@ -133,6 +144,7 @@ async def process_query(request: QueryRequest):
         try:
             decomposition_data = {
                 "conversation_id": conversation_id,
+                "message_id": message_id,  # 메시지 ID 명시적 추가
                 "query": request.query,
                 "status": "decomposing",
                 "task_descriptions": natural_language_tasks,
@@ -141,6 +153,24 @@ async def process_query(request: QueryRequest):
                 "updated_at": time.time()
             }
             await app.state.context_manager.save_response(conversation_id, decomposition_data)
+            
+            # 메시지에도 태스크 분해 결과 저장 (이 부분이 중요)
+            message = await app.state.context_manager.get_message(message_id)
+            if message:
+                message["task_descriptions"] = natural_language_tasks
+                message["execution_levels"] = execution_levels
+                message["status"] = "processing"
+                message["updated_at"] = time.time()
+                
+                # 메시지 업데이트
+                msg_key = f"message:{message_id}"
+                app.state.context_manager.redis.set(msg_key, json.dumps(message))
+                app.state.context_manager.redis.expire(msg_key, app.state.context_manager.ttl)
+                
+                logger.info(f"메시지 ID {message_id}에 태스크 분해 결과를 저장했습니다.")
+            else:
+                logger.warning(f"태스크 분해 결과를 저장할 메시지 {message_id}를 찾을 수 없습니다.")
+            
             logger.info(f"대화 ID {conversation_id}의 태스크 분해 결과를 Redis에 저장했습니다.")
         except Exception as e:
             logger.error(f"태스크 분해 결과 저장 중 오류: {str(e)}")
@@ -228,6 +258,7 @@ async def process_query(request: QueryRequest):
                     # 현재까지의 태스크 결과만 포함하는 임시 데이터 구성
                     current_tasks_data = {
                         "conversation_id": conversation_id,
+                        "message_id": message_id,  # 메시지 ID 추가
                         "status": "processing",
                         "tasks": final_results + level_results,  # 이전 레벨 + 현재 레벨 결과 누적
                         "created_at": conversation.start_time,
@@ -236,7 +267,20 @@ async def process_query(request: QueryRequest):
                     
                     # Redis에 태스크 결과 즉시 저장
                     await app.state.context_manager.save_response(conversation_id, current_tasks_data)
-                    logger.info(f"대화 ID {conversation_id}의 태스크 결과 업데이트됨: {role} - {status}")
+                    
+                    # 메시지에도 태스크 결과 저장
+                    message = await app.state.context_manager.get_message(message_id)
+                    if message:
+                        message["tasks"] = final_results + level_results
+                        message["status"] = "processing"
+                        message["updated_at"] = time.time()
+                        
+                        # 메시지 업데이트
+                        msg_key = f"message:{message_id}"
+                        app.state.context_manager.redis.set(msg_key, json.dumps(message))
+                        app.state.context_manager.redis.expire(msg_key, app.state.context_manager.ttl)
+                    
+                    logger.info(f"대화 ID {conversation_id}, 메시지 ID {message_id}의 태스크 결과 업데이트됨: {role} - {status}")
                 except Exception as e:
                     logger.error(f"태스크 결과 저장 중 오류: {str(e)}")
             
@@ -679,29 +723,48 @@ async def get_task_decomposition(conversation_id: str, message_id: Optional[str]
     try:
         if message_id:
             # 특정 메시지 정보 조회
+            logger.info(f"메시지 ID {message_id}로 태스크 분해 결과 조회 시도")
             message = await app.state.context_manager.get_message(message_id)
             if not message:
+                logger.warning(f"메시지 {message_id}를 찾을 수 없습니다.")
                 return {"error": f"메시지 {message_id}를 찾을 수 없습니다."}
                 
             # 메시지에서 태스크 분해 결과 추출
-            if "tasks" in message:
+            if "task_descriptions" in message:
+                logger.info(f"메시지 {message_id}에서 태스크 분해 결과 확인됨")
                 return {
                     "conversation_id": conversation_id,
                     "message_id": message_id,
-                    "tasks": message.get("tasks", []),
-                    "task_descriptions": message.get("task_descriptions", [])
+                    "task_descriptions": message.get("task_descriptions", []),
+                    "execution_levels": message.get("execution_levels", [])
                 }
+            else:
+                logger.warning(f"메시지 {message_id}에 태스크 분해 결과가 없습니다.")
         
         # 메시지 ID가 없거나 메시지에 태스크 분해 결과가 없는 경우 대화 정보에서 조회
+        logger.info(f"대화 ID {conversation_id}로 태스크 분해 결과 조회 시도")
         conversation = await app.state.context_manager.get_conversation(conversation_id)
         if not conversation:
+            logger.warning(f"대화 {conversation_id}를 찾을 수 없습니다.")
             return {"error": f"대화 {conversation_id}를 찾을 수 없습니다."}
             
-        return {
-            "conversation_id": conversation_id,
-            "tasks": conversation.get("task_descriptions", []),
-            "original_query": conversation.get("query", "")
-        }
+        if "task_descriptions" in conversation:
+            logger.info(f"대화 {conversation_id}에서 태스크 분해 결과 확인됨")
+            return {
+                "conversation_id": conversation_id,
+                "task_descriptions": conversation.get("task_descriptions", []),
+                "execution_levels": conversation.get("execution_levels", []),
+                "original_query": conversation.get("query", "")
+            }
+        else:
+            logger.warning(f"대화 {conversation_id}에 태스크 분해 결과가 없습니다.")
+            return {
+                "conversation_id": conversation_id,
+                "task_descriptions": [],
+                "execution_levels": [],
+                "original_query": conversation.get("query", ""),
+                "status": "pending"
+            }
     except Exception as e:
         logger.error(f"태스크 분해 결과 조회 중 오류: {str(e)}")
         return {"error": f"태스크 분해 결과 조회 중 오류가 발생했습니다: {str(e)}"}
@@ -722,19 +785,30 @@ async def get_agent_tasks(conversation_id: str, message_id: Optional[str] = None
     try:
         if message_id:
             # 특정 메시지 정보 조회
+            logger.info(f"메시지 ID {message_id}로 태스크 결과 조회 시도")
             message = await app.state.context_manager.get_message(message_id)
             if not message:
+                logger.warning(f"메시지 {message_id}를 찾을 수 없습니다.")
                 return {"error": f"메시지 {message_id}를 찾을 수 없습니다."}
                 
             # 메시지에서 태스크 결과 추출
             if "tasks" in message:
+                logger.info(f"메시지 {message_id}에서 태스크 결과 확인됨: {len(message['tasks'])}개")
                 return {
                     "conversation_id": conversation_id,
                     "message_id": message_id,
                     "tasks": message.get("tasks", [])
                 }
+            else:
+                logger.warning(f"메시지 {message_id}에 태스크 결과가 없습니다.")
+                return {
+                    "conversation_id": conversation_id,
+                    "message_id": message_id,
+                    "tasks": []
+                }
         
         # 메시지 ID가 없거나 메시지에 태스크 결과가 없는 경우 대화 정보에서 조회
+        logger.info(f"대화 ID {conversation_id}로 태스크 결과 조회 시도")
         tasks = await app.state.context_manager.get_tasks_by_conversation(conversation_id)
         return {
             "conversation_id": conversation_id,

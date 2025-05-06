@@ -374,6 +374,69 @@ class ContextManager:
             # 실패 시 임의의 ID 반환
             return str(uuid.uuid4())
     
+    async def create_message_with_id(self, message_id: str, conversation_id: str, query: str, user_id: Optional[str] = None) -> str:
+        """
+        클라이언트가 제공한 ID로 새 메시지 생성
+        
+        Args:
+            message_id: 클라이언트가 제공한 메시지 ID
+            conversation_id: 대화 ID
+            query: 사용자 쿼리
+            user_id: 사용자 ID
+            
+        Returns:
+            사용한 메시지 ID
+        """
+        try:
+            # 이미 존재하는지 확인
+            existing = await self.get_message(message_id)
+            if existing:
+                logger.warning(f"메시지 ID {message_id}가 이미 존재합니다. 기존 메시지를 반환합니다.")
+                return message_id
+            
+            # 대화 정보 확인
+            conversation = await self.get_conversation(conversation_id)
+            if not conversation:
+                # 대화가 없으면 새로 생성
+                conversation_id = await self.create_conversation(user_id)
+                conversation = await self.get_conversation(conversation_id)
+                
+            # 현재 시간 기록
+            timestamp = time.time()
+            
+            # 메시지 저장
+            message = {
+                "id": message_id,
+                "conversation_id": conversation_id,
+                "request": query,
+                "created_at": timestamp,
+                "updated_at": timestamp,
+                "status": "pending",
+                "user_id": user_id
+            }
+            
+            # Redis에 메시지 저장
+            key = f"message:{message_id}"
+            self.redis.set(key, json.dumps(message))
+            self.redis.expire(key, self.ttl)
+            
+            # 대화 메시지 목록 업데이트
+            if "messages" not in conversation:
+                conversation["messages"] = []
+            conversation["messages"].append(message_id)
+            conversation["updated_at"] = timestamp
+            
+            # 대화 정보 업데이트
+            conv_key = f"conversation:{conversation_id}"
+            self.redis.set(conv_key, json.dumps(conversation))
+            self.redis.expire(conv_key, self.ttl)
+            
+            logger.info(f"클라이언트 제공 ID로 메시지 생성: {message_id} (대화: {conversation_id})")
+            return message_id
+        except Exception as e:
+            logger.error(f"클라이언트 ID 메시지 생성 중 오류: {str(e)}")
+            return message_id  # 오류가 발생해도 클라이언트 ID 반환
+    
     async def update_message(self, message_id: str, response: Dict[str, Any]) -> None:
         """
         메시지 업데이트 (응답 저장)

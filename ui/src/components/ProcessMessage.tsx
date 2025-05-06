@@ -10,6 +10,7 @@ interface ProcessMessageProps {
     taskIndex?: number;
     taskDescription?: string;
     status?: string;
+    messageId?: string;
 }
 
 /**

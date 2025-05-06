@@ -9,7 +9,18 @@ export const orchestratorApi = {
     // 질의 처리 API
     processQuery: async (request: QueryRequest): Promise<QueryResponse> => {
         try {
-            const { query, conversation_id, context } = request;
+            const { query, conversation_id, context, message_id } = request;
+
+            // 메시지 ID 검증
+            if (!message_id) {
+                console.error(
+                    "[API] 쿼리 처리 실패: 메시지 ID가 누락되었습니다."
+                );
+                throw new Error("메시지 ID가 필요합니다.");
+            }
+
+            // 요청에 메시지 ID 포함 로그
+            console.log(`[API] 요청에 메시지 ID 포함: ${message_id}`);
 
             // 에이전트 설정 정보 가져오기
             const agentConfigs = agentConfigService.getRequestConfigs();
@@ -18,41 +29,31 @@ export const orchestratorApi = {
             let disabledAgentIds = agentEnablementService.getDisabledAgentIds();
 
             // 문자열 배열이 맞는지 확인하고 필터링
-            disabledAgentIds = disabledAgentIds
-                .filter((id) => id !== null && id !== undefined)
-                .map((id) => String(id));
-
-            // 요청 데이터 생성
-            const requestData: QueryRequest = {
-                query,
-                conversation_id,
-                agent_configs: agentConfigs,
-            };
-
-            // 비활성화된 에이전트가 있는 경우에만 추가
-            if (disabledAgentIds && disabledAgentIds.length > 0) {
-                requestData.disabled_agents = disabledAgentIds;
-            }
-
-            // 컨텍스트가 있으면 추가
-            if (context) {
-                requestData.context = context;
-            }
-
-            // 요청 데이터 최종 확인 로그
-            console.log(
-                "오케스트레이터 최종 요청 데이터:",
-                JSON.stringify(requestData, null, 2)
+            disabledAgentIds = disabledAgentIds.filter(
+                (id): id is string => typeof id === "string"
             );
 
-            // API 요청 실행
+            // API 요청 데이터 구성
+            const requestData = {
+                query,
+                conversation_id,
+                message_id, // 메시지 ID 포함
+                context,
+                agent_configs: agentConfigs,
+                disabled_agents: disabledAgentIds,
+            };
+
+            // 최종 요청 데이터 로깅
+            console.log("오케스트레이터 최종 요청 데이터:", requestData);
+
+            // API 호출
             const response = await apiClient.post(
                 `${BASE_URL}/query`,
                 requestData
             );
             return response.data;
-        } catch (error: any) {
-            console.error("오케스트레이터 API 오류:", error);
+        } catch (error) {
+            console.error("[API] 쿼리 처리 오류:", error);
             throw error;
         }
     },
@@ -116,83 +117,100 @@ export const orchestratorApi = {
         return response.data;
     },
 
-    // 태스크 분리 결과 조회 API
+    // 태스크 분해 결과 조회 API
     getTaskDecomposition: async (
         conversationId: string,
-        messageId?: string
-    ) => {
-        try {
-            // 메시지 ID가 있으면 쿼리 파라미터로 추가
-            const url = messageId
-                ? `${BASE_URL}/conversations/${conversationId}/decomposition?message_id=${messageId}`
-                : `${BASE_URL}/conversations/${conversationId}/decomposition`;
-
-            const response = await apiClient.get(url);
-            return response.data;
-        } catch (error) {
-            console.error("태스크 분리 결과 조회 오류:", error);
-            throw error;
-        }
-    },
-
-    // 진행 중인 에이전트 태스크 결과 조회 API
-    getAgentTasks: async (conversationId: string, messageId?: string) => {
-        try {
-            // 메시지 ID가 있으면 쿼리 파라미터로 추가
-            const url = messageId
-                ? `${BASE_URL}/conversations/${conversationId}/tasks?message_id=${messageId}`
-                : `${BASE_URL}/conversations/${conversationId}/tasks`;
-
-            const response = await apiClient.get(url);
-            return response.data;
-        } catch (error) {
-            console.error("에이전트 태스크 결과 조회 오류:", error);
-            throw error;
-        }
-    },
-
-    // 특정 에이전트 태스크 결과 조회 API
-    getAgentTaskResult: async (
-        conversationId: string,
-        taskId: string,
-        messageId?: string
-    ) => {
-        try {
-            // 태스크 결과 API를 호출하고, 특정 태스크만 필터링
-            const url = messageId
-                ? `${BASE_URL}/conversations/${conversationId}/tasks?message_id=${messageId}`
-                : `${BASE_URL}/conversations/${conversationId}/tasks`;
-
-            const response = await apiClient.get(url);
-
-            // 요청한 taskId와 일치하는 태스크 찾기
-            const task = response.data.tasks?.find(
-                (t: { id: string }) => t.id === taskId
+        messageId: string
+    ): Promise<any> => {
+        if (!conversationId) {
+            console.error(
+                "[API] 태스크 분해 결과 조회 실패: 대화 ID가 없습니다."
             );
+            throw new Error("대화 ID가 필요합니다.");
+        }
 
-            return {
-                conversation_id: response.data.conversation_id,
-                message_id: response.data.message_id,
-                task: task || null,
-            };
+        if (!messageId) {
+            console.error(
+                "[API] 태스크 분해 결과 조회 실패: 메시지 ID가 없습니다."
+            );
+            throw new Error("메시지 ID가 필요합니다.");
+        }
+
+        console.log(
+            `[API] 태스크 분해 결과 요청: 대화=${conversationId}, 메시지=${messageId}`
+        );
+
+        try {
+            const response = await apiClient.get(
+                `${BASE_URL}/conversations/${conversationId}/decomposition?message_id=${messageId}`
+            );
+            return response.data;
         } catch (error) {
-            console.error("에이전트 태스크 결과 조회 오류:", error);
+            console.error(`[API] 태스크 분해 결과 조회 오류:`, error);
             throw error;
         }
     },
 
-    // 최종 통합 결과 조회 API
-    getFinalResult: async (conversationId: string, messageId?: string) => {
-        try {
-            // 메시지 ID가 있으면 쿼리 파라미터로 추가
-            const url = messageId
-                ? `${BASE_URL}/conversations/${conversationId}/result?message_id=${messageId}`
-                : `${BASE_URL}/conversations/${conversationId}/result`;
+    // 에이전트 태스크 결과 조회 API
+    getAgentTasks: async (
+        conversationId: string,
+        messageId: string
+    ): Promise<any> => {
+        if (!conversationId) {
+            console.error(
+                "[API] 에이전트 태스크 결과 조회 실패: 대화 ID가 없습니다."
+            );
+            throw new Error("대화 ID가 필요합니다.");
+        }
 
-            const response = await apiClient.get(url);
+        if (!messageId) {
+            console.error(
+                "[API] 에이전트 태스크 결과 조회 실패: 메시지 ID가 없습니다."
+            );
+            throw new Error("메시지 ID가 필요합니다.");
+        }
+
+        console.log(
+            `[API] 에이전트 태스크 결과 요청: 대화=${conversationId}, 메시지=${messageId}`
+        );
+
+        try {
+            const response = await apiClient.get(
+                `${BASE_URL}/conversations/${conversationId}/tasks?message_id=${messageId}`
+            );
             return response.data;
         } catch (error) {
-            console.error("최종 통합 결과 조회 오류:", error);
+            console.error(`[API] 에이전트 태스크 결과 조회 오류:`, error);
+            throw error;
+        }
+    },
+
+    // 최종 결과 조회 API
+    getFinalResult: async (
+        conversationId: string,
+        messageId: string
+    ): Promise<any> => {
+        if (!conversationId) {
+            console.error("[API] 최종 결과 조회 실패: 대화 ID가 없습니다.");
+            throw new Error("대화 ID가 필요합니다.");
+        }
+
+        if (!messageId) {
+            console.error("[API] 최종 결과 조회 실패: 메시지 ID가 없습니다.");
+            throw new Error("메시지 ID가 필요합니다.");
+        }
+
+        console.log(
+            `[API] 최종 결과 요청: 대화=${conversationId}, 메시지=${messageId}`
+        );
+
+        try {
+            const response = await apiClient.get(
+                `${BASE_URL}/conversations/${conversationId}/result?message_id=${messageId}`
+            );
+            return response.data;
+        } catch (error) {
+            console.error(`[API] 최종 결과 조회 오류:`, error);
             throw error;
         }
     },
