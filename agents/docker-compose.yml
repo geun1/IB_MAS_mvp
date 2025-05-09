@@ -14,8 +14,6 @@ services:
             - RABBITMQ_PORT=5672
             - CONTAINER_NAME=web_search_agent
             - PORT=8000
-            - OPENAI_API_KEY=${OPENAI_API_KEY:-REMOVEDproj-Z9xpJQlE6j2LJqUNxWwFk1BrJwgaf6ai1Pase_qZdjBcNwUUqkW-z-iWlymnqON_WlLpXZL8J2T3BlbkFJFdDQE_PlQwnd9h8TQ7NpaZGBAB-ukoN88VWCh0aaS7KYdvKoRtXAJvviTF9inX_sEilr1c5rMA}
-            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-REMOVEDant-test-key}
             - LOG_LEVEL=DEBUG
             - PYTHONPATH=/app
         volumes:
@@ -46,8 +44,6 @@ services:
             - RABBITMQ_PORT=5672
             - CONTAINER_NAME=writer_agent
             - PORT=8000
-            - OPENAI_API_KEY=${OPENAI_API_KEY:-REMOVEDproj-Z9xpJQlE6j2LJqUNxWwFk1BrJwgaf6ai1Pase_qZdjBcNwUUqkW-z-iWlymnqON_WlLpXZL8J2T3BlbkFJFdDQE_PlQwnd9h8TQ7NpaZGBAB-ukoN88VWCh0aaS7KYdvKoRtXAJvviTF9inX_sEilr1c5rMA}
-            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-REMOVEDant-test-key}
             - LOG_LEVEL=DEBUG
             - PYTHONPATH=/app
         volumes:
@@ -78,8 +74,6 @@ services:
             - RABBITMQ_PORT=5672
             - CONTAINER_NAME=stock_data_agent
             - PORT=8000
-            - OPENAI_API_KEY=${OPENAI_API_KEY:-REMOVEDproj-Z9xpJQlE6j2LJqUNxWwFk1BrJwgaf6ai1Pase_qZdjBcNwUUqkW-z-iWlymnqON_WlLpXZL8J2T3BlbkFJFdDQE_PlQwnd9h8TQ7NpaZGBAB-ukoN88VWCh0aaS7KYdvKoRtXAJvviTF9inX_sEilr1c5rMA}
-            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-REMOVEDant-test-key}
             - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY:-XVOHLPWZNWVPORLZ}
             - LOG_LEVEL=DEBUG
             - PYTHONPATH=/app
@@ -111,8 +105,6 @@ services:
             - RABBITMQ_PORT=5672
             - CONTAINER_NAME=code_generator_agent
             - PORT=8000
-            - OPENAI_API_KEY=${OPENAI_API_KEY:-REMOVEDproj-Z9xpJQlE6j2LJqUNxWwFk1BrJwgaf6ai1Pase_qZdjBcNwUUqkW-z-iWlymnqON_WlLpXZL8J2T3BlbkFJFdDQE_PlQwnd9h8TQ7NpaZGBAB-ukoN88VWCh0aaS7KYdvKoRtXAJvviTF9inX_sEilr1c5rMA}
-            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-REMOVEDant-test-key}
             - LOG_LEVEL=DEBUG
             - PYTHONPATH=/app
         volumes:
@@ -143,8 +135,6 @@ services:
             - RABBITMQ_PORT=5672
             - CONTAINER_NAME=example_agent
             - PORT=8000
-            - OPENAI_API_KEY=${OPENAI_API_KEY}
-            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
             - LOG_LEVEL=${LOG_LEVEL:-INFO}
             - PYTHONPATH=/app
         volumes:
@@ -178,8 +168,6 @@ services:
             - CONTAINER_NAME=react_agent
             - PORT=8030
             - PYTHONPATH=/app
-            - OPENAI_API_KEY=${OPENAI_API_KEY}
-            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
             - LOG_LEVEL=INFO
         networks:
             - agent-network
@@ -202,8 +190,6 @@ services:
             - CONTAINER_NAME=data_analysis_agent
             - PORT=8040
             - PYTHONPATH=/app
-            - OPENAI_API_KEY=${OPENAI_API_KEY}
-            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
             - LOG_LEVEL=INFO
         networks:
             - agent-network
@@ -223,8 +209,6 @@ services:
             - RABBITMQ_PORT=5672
             - CONTAINER_NAME=stock_analysis_agent
             - PORT=8000
-            - OPENAI_API_KEY=${OPENAI_API_KEY:-REMOVEDproj-Z9xpJQlE6j2LJqUNxWwFk1BrJwgaf6ai1Pase_qZdjBcNwUUqkW-z-iWlymnqON_WlLpXZL8J2T3BlbkFJFdDQE_PlQwnd9h8TQ7NpaZGBAB-ukoN88VWCh0aaS7KYdvKoRtXAJvviTF9inX_sEilr1c5rMA}
-            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-REMOVEDant-test-key}
             - LOG_LEVEL=DEBUG
             - PYTHONPATH=/app
         volumes:

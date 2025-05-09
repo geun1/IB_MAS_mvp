@@ -1,6 +1,9 @@
 import os
 from typing import Dict, Any
 from pydantic import BaseSettings
+import dotenv
+
+dotenv.load_dotenv("../../.env")
 
 class BrokerSettings(BaseSettings):
     # 서비스 설정
@@ -21,7 +24,7 @@ class BrokerSettings(BaseSettings):
     
     # LLM 설정
     DEFAULT_LLM_MODEL: str = os.getenv("DEFAULT_LLM_MODEL", "gpt-4o-mini")
-    LLM_API_KEY: str = "REMOVEDproj-Z9xpJQlE6j2LJqUNxWwFk1BrJwgaf6ai1Pase_qZdjBcNwUUqkW-z-iWlymnqON_WlLpXZL8J2T3BlbkFJFdDQE_PlQwnd9h8TQ7NpaZGBAB-ukoN88VWCh0aaS7KYdvKoRtXAJvviTF9inX_sEilr1c5rMA"
+    LLM_API_KEY: str = os.getenv("OPENAI_API_KEY")
 
     @property
     def rabbitmq_url(self) -> str:

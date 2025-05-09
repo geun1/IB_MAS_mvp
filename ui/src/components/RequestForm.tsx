@@ -1093,7 +1093,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
             // 태스크 결과 요소 생성 (원래 형식으로 복원)
             const taskElement = (
                 <ProcessMessage
-                    key={`taREMOVED${taskId}-${currentMessageId || "default"}`}
+                    key={`task-${taskId}-${currentMessageId || "default"}`}
                     type="agent_result"
                     role={task.role}
                     content={resultContent}
@@ -1168,7 +1168,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                 // 태스크 분할 내용 렌더링 (원래 형식으로 변경)
                 updatedUnit.systemResponses.taskDecomposition = (
                     <ProcessMessage
-                        key={`taREMOVEDdecomposition-${
+                        key={`task-decomposition-${
                             currentMessageId || conversationId || Date.now()
                         }`}
                         type="task_split"
@@ -1702,7 +1702,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                     {currentConversationUnit.systemResponses.taskResults.map(
                         (taskResult, taskIndex) =>
                             React.cloneElement(taskResult, {
-                                key: `current-taREMOVED${taskIndex}`,
+                                key: `current-task-${taskIndex}`,
                             })
                     )}
 
@@ -1870,7 +1870,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                             {unit.systemResponses.taskResults.map(
                                 (taskResult, taskIndex) =>
                                     React.cloneElement(taskResult, {
-                                        key: `taREMOVEDresult-${index}-${taskIndex}`,
+                                        key: `task-result-${index}-${taskIndex}`,
                                     })
                             )}
 

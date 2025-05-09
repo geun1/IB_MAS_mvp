@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 logger = logging.getLogger(__name__)
 
 # .env 파일 로드
-load_dotenv()
+load_dotenv("../../.env")
 logger.info("환경 변수 로드 완료")
 
 # API 설정
@@ -19,8 +19,7 @@ BROKER_URL = os.getenv("BROKER_URL", "http://broker:8002")
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
 
 # LLM 설정
-# LLM_API_KEY = os.getenv("OPENAI_API_KEY", os.getenv("LLM_API_KEY", ""))
-LLM_API_KEY = "REMOVEDproj-Z9xpJQlE6j2LJqUNxWwFk1BrJwgaf6ai1Pase_qZdjBcNwUUqkW-z-iWlymnqON_WlLpXZL8J2T3BlbkFJFdDQE_PlQwnd9h8TQ7NpaZGBAB-ukoN88VWCh0aaS7KYdvKoRtXAJvviTF9inX_sEilr1c5rMA"
+LLM_API_KEY = os.getenv("OPENAI_API_KEY", os.getenv("LLM_API_KEY", ""))
 logger.info(f"API 키 설정 상태: {'설정됨' if LLM_API_KEY else '설정되지 않음'}")
 
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
