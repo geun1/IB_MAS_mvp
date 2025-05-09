@@ -26,7 +26,7 @@ if [ ! -f .env ]; then
 fi
 
 # API 키 체크
-if ! grep -q "OPENAI_API_KEY=***REMOVED***" .env || grep -q "OPENAI_API_KEY=***REMOVED***\.\.\." .env; then
+if ! grep -q "OPENAI_API_KEY=REMOVED" .env || grep -q "OPENAI_API_KEY=REMOVED\.\.\." .env; then
     echo -e "${RED}OPENAI_API_KEY가 올바르게 설정되어 있지 않습니다.${NC}"
     echo -e "${YELLOW}테스트를 계속하지만, API 호출이 실패할 수 있습니다.${NC}"
 fi

@@ -294,7 +294,7 @@ async def get_agent_statistics(agent_id: str):
             detail=f"통계 조회 오류: {str(e)}"
         )
 
-@app.post("/agents/{agent_id}/ta***REMOVED***stats", response_model=ApiResponse)
+@app.post("/agents/{agent_id}/taREMOVEDstats", response_model=ApiResponse)
 async def update_agent_task_statistics(
     agent_id: str,
     data: Dict[str, Any]

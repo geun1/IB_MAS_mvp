@@ -91,7 +91,7 @@ async def test_agent_statistics_update():
         }
         
         update_response = await client.post(
-            f"{REGISTRY_URL}/agents/{agent_id}/ta***REMOVED***stats", 
+            f"{REGISTRY_URL}/agents/{agent_id}/taREMOVEDstats", 
             json=stat_update
         )
         

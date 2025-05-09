@@ -1093,7 +1093,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
             // 태스크 결과 요소 생성 (원래 형식으로 복원)
             const taskElement = (
                 <ProcessMessage
-                    key={`ta***REMOVED***${taskId}-${currentMessageId || "default"}`}
+                    key={`taREMOVED${taskId}-${currentMessageId || "default"}`}
                     type="agent_result"
                     role={task.role}
                     content={resultContent}
@@ -1168,7 +1168,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                 // 태스크 분할 내용 렌더링 (원래 형식으로 변경)
                 updatedUnit.systemResponses.taskDecomposition = (
                     <ProcessMessage
-                        key={`ta***REMOVED***decomposition-${
+                        key={`taREMOVEDdecomposition-${
                             currentMessageId || conversationId || Date.now()
                         }`}
                         type="task_split"
@@ -1702,7 +1702,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                     {currentConversationUnit.systemResponses.taskResults.map(
                         (taskResult, taskIndex) =>
                             React.cloneElement(taskResult, {
-                                key: `current-ta***REMOVED***${taskIndex}`,
+                                key: `current-taREMOVED${taskIndex}`,
                             })
                     )}
 
@@ -1870,7 +1870,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                             {unit.systemResponses.taskResults.map(
                                 (taskResult, taskIndex) =>
                                     React.cloneElement(taskResult, {
-                                        key: `ta***REMOVED***result-${index}-${taskIndex}`,
+                                        key: `taREMOVEDresult-${index}-${taskIndex}`,
                                     })
                             )}
 

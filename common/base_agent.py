@@ -14,6 +14,9 @@ from fastapi import FastAPI, Request, HTTPException
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 import uuid
 
+# 공통 LLM 모듈 추가
+from common.llm_client import LLMClient
+
 logger = logging.getLogger(__name__)
 
 # 재시도 설정
@@ -77,6 +80,9 @@ class BaseAgent(ABC):
         # HTTP 클라이언트 초기화 (재사용)
         self.http_client = httpx.AsyncClient(timeout=30.0) # 타임아웃 설정
         
+        # LLM 클라이언트 초기화 (기본 모델)
+        self.llm_client = LLMClient(default_model=os.getenv("LLM_MODEL", "gpt-4o-mini"))
+        
         # 기본 라우트 설정
         self._setup_routes()
         
@@ -102,6 +108,11 @@ class BaseAgent(ABC):
         self.app.get("/")(self.root)
         self.app.get("/health")(self.health)
         self.app.post("/run")(self.run)
+        
+        # LLM 설정 관련 엔드포인트 추가
+        self.app.post("/api/settings/llm-config")(self.update_llm_config)
+        self.app.get("/api/settings/llm-status")(self.get_llm_status)
+        self.app.get("/api/settings/test-llm-connection/{model_name}")(self.test_llm_connection)
     
     def _setup_events(self):
         """애플리케이션 시작/종료 이벤트 설정"""
@@ -373,3 +384,111 @@ class BaseAgent(ABC):
             Exception: 처리 중 예상치 못한 오류 발생 시
         """
         pass 
+
+    # LLM 설정 업데이트 엔드포인트
+    async def update_llm_config(self, request: Request):
+        """에이전트 LLM 설정 업데이트"""
+        try:
+            data = await request.json()
+            config = data.get("config", {})
+            
+            # LLM 설정 정보 추출
+            model_name = config.get("modelName")
+            temperature = config.get("temperature", 0.7)
+            max_tokens = config.get("maxTokens", 1024)
+            
+            if not model_name:
+                return {
+                    "success": False,
+                    "message": "모델 이름은 필수 항목입니다."
+                }
+            
+            # LLM 클라이언트 설정 업데이트
+            self.llm_client = LLMClient(
+                default_model=model_name,
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            
+            # 로깅
+            logger.info(f"{self.agent_role} 에이전트의 LLM 설정 업데이트: 모델={model_name}, 온도={temperature}, 최대토큰={max_tokens}")
+            
+            return {
+                "success": True,
+                "message": f"{self.agent_role} LLM 설정이 업데이트되었습니다."
+            }
+        except Exception as e:
+            logger.error(f"LLM 설정 업데이트 중 오류 발생: {str(e)}")
+            return {
+                "success": False,
+                "message": f"LLM 설정 업데이트 실패: {str(e)}"
+            }
+    
+    # LLM 상태 조회 엔드포인트
+    async def get_llm_status(self):
+        """현재 LLM 설정 및 상태 조회"""
+        try:
+            if not hasattr(self, 'llm_client') or not self.llm_client:
+                return {
+                    "success": True,
+                    "initialized": False,
+                    "message": "LLM 클라이언트가 초기화되지 않았습니다."
+                }
+            
+            # 현재 LLM 클라이언트 설정 조회
+            return {
+                "success": True,
+                "initialized": True,
+                "model": self.llm_client.default_model,
+                "temperature": self.llm_client.temperature,
+                "max_tokens": self.llm_client.max_tokens
+            }
+        except Exception as e:
+            logger.error(f"LLM 상태 조회 중 오류 발생: {str(e)}")
+            return {
+                "success": False,
+                "message": f"LLM 상태 조회 실패: {str(e)}"
+            }
+            
+    # LLM 모델 연결 테스트 엔드포인트
+    async def test_llm_connection(self, model_name: str):
+        """특정 LLM 모델의 연결 테스트 수행"""
+        try:
+            logger.info(f"LLM 모델 '{model_name}' 연결 테스트 시작")
+            
+            # 테스트 프롬프트
+            test_prompt = "간단한 테스트입니다. '테스트 성공'이라고 응답해주세요."
+            
+            # 임시 LLM 클라이언트 생성
+            test_client = LLMClient(default_model=model_name)
+            
+            # 비동기 호출
+            start_time = datetime.now().timestamp()
+            try:
+                response = await test_client.aask(test_prompt)
+                execution_time = datetime.now().timestamp() - start_time
+                
+                logger.info(f"LLM 모델 '{model_name}' 테스트 성공! 응답 시간: {execution_time:.2f}초")
+                return {
+                    "success": True,
+                    "model": model_name,
+                    "response": response,
+                    "execution_time": execution_time,
+                    "message": f"LLM 모델 '{model_name}' 연결 테스트 성공"
+                }
+            except Exception as e:
+                execution_time = datetime.now().timestamp() - start_time
+                logger.error(f"LLM 모델 '{model_name}' 연결 테스트 실패: {str(e)}")
+                return {
+                    "success": False,
+                    "model": model_name,
+                    "error": str(e),
+                    "execution_time": execution_time,
+                    "message": f"LLM 모델 '{model_name}' 연결 테스트 실패: {str(e)}"
+                }
+        except Exception as e:
+            logger.error(f"LLM 모델 테스트 중 오류 발생: {str(e)}")
+            return {
+                "success": False,
+                "message": f"LLM 모델 테스트 중 오류 발생: {str(e)}"
+            } 

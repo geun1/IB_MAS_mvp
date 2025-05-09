@@ -8,7 +8,7 @@ import uuid
 import secrets
 import json
 from typing import Dict, List, Optional, Any
-from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect, Request
 from pydantic import BaseModel
 from fastapi.responses import JSONResponse
 
@@ -1091,6 +1091,251 @@ async def process_query_background(request: QueryRequest):
         await process_query(request)
     except Exception as e:
         logger.error(f"백그라운드 쿼리 처리 중 오류 발생: {str(e)}")
+
+# LLM 설정을 위한 엔드포인트 추가
+@app.post("/api/settings/llm-config")
+async def set_llm_config(request: Request):
+    """
+    특정 컴포넌트에 대한 LLM 설정 업데이트
+    """
+    try:
+        data = await request.json()
+        component = data.get("component")
+        config = data.get("config")
+        
+        if not component or not config:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": "컴포넌트와 설정 정보가 필요합니다."}
+            )
+        
+        # 설정 저장 (Redis 또는 DB에 저장)
+        # 임시로 전역 변수에 저장
+        app.state.llm_configs = getattr(app.state, "llm_configs", {})
+        app.state.llm_configs[component] = config
+        
+        logger.info(f"LLM 설정 업데이트: {component} => {config['modelName']}")
+        
+        # 오케스트레이터 LLM 클라이언트 설정 업데이트 (즉시 적용)
+        if component == "orchestrator" and hasattr(app.state, "llm_client"):
+            model_name = config.get("modelName")
+            temperature = config.get("temperature", 0.7)
+            max_tokens = config.get("maxTokens", 1024)
+            
+            app.state.llm_client.model = model_name
+            app.state.llm_client.temperature = temperature
+            app.state.llm_client.max_tokens = max_tokens
+            
+            logger.info(f"오케스트레이터 LLM 설정 적용됨: 모델={model_name}, 온도={temperature}, 최대토큰={max_tokens}")
+        
+        # Broker 서비스에 설정 전파 (필요시)
+        if component == "broker" and app.state.broker_client:
+            try:
+                await app.state.broker_client.update_llm_config(config)
+                logger.info("브로커 LLM 설정이 성공적으로 전파되었습니다.")
+            except Exception as e:
+                logger.error(f"브로커 LLM 설정 전파 실패: {str(e)}")
+        
+        # 에이전트별 LLM 설정도 에이전트 서비스에 전달 (구현 필요)
+        if component not in ["orchestrator", "broker"]:
+            logger.info(f"에이전트 {component}의 LLM 설정 전파 필요")
+            # TODO: 에이전트별 설정 전파 구현
+        
+        return JSONResponse(
+            status_code=200,
+            content={"success": True, "message": f"{component} LLM 설정이 업데이트되었습니다."}
+        )
+    except Exception as e:
+        logger.error(f"LLM 설정 업데이트 중 오류 발생: {str(e)}")
+        return JSONResponse(
+            status_code=500, 
+            content={"success": False, "message": f"LLM 설정 업데이트 실패: {str(e)}"}
+        )
+
+@app.get("/api/settings/llm-config")
+async def get_llm_config(request: Request, component: str = None):
+    """
+    LLM 설정 조회
+    """
+    try:
+        app.state.llm_configs = getattr(app.state, "llm_configs", {})
+        
+        # 특정 컴포넌트 설정 조회
+        if component:
+            config = app.state.llm_configs.get(component, {})
+            return JSONResponse(
+                status_code=200, 
+                content={"success": True, "component": component, "config": config}
+            )
+        
+        # 전체 설정 조회
+        return JSONResponse(
+            status_code=200,
+            content={"success": True, "configs": app.state.llm_configs}
+        )
+    except Exception as e:
+        logger.error(f"LLM 설정 조회 중 오류 발생: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": f"LLM 설정 조회 실패: {str(e)}"}
+        )
+
+@app.get("/api/settings/available-llm-models")
+async def get_available_llm_models():
+    """
+    사용 가능한 LLM 모델 목록 조회
+    """
+    try:
+        # 사용 가능한 모델 목록 (실제로는 환경 변수나 설정에서 가져오는 것이 좋음)
+        models = [
+            {
+                "id": "gpt-4o",
+                "name": "GPT-4o",
+                "provider": "OpenAI",
+                "description": "가장 강력한 GPT-4 Omni 모델"
+            },
+            {
+                "id": "gpt-4o-mini",
+                "name": "GPT-4o Mini",
+                "provider": "OpenAI",
+                "description": "경제적인 GPT-4o 버전"
+            },
+            {
+                "id": "gpt-3.5-turbo",
+                "name": "GPT-3.5 Turbo",
+                "provider": "OpenAI",
+                "description": "빠르고 경제적인 모델"
+            },
+            {
+                "id": "ollama/llama3:latest",
+                "name": "Llama 3",
+                "provider": "Local (Ollama)",
+                "description": "로컬에서 실행되는 Llama 3 모델"
+            },
+            {
+                "id": "ollama/mistral:latest",
+                "name": "Mistral",
+                "provider": "Local (Ollama)",
+                "description": "로컬에서 실행되는 Mistral 모델"
+            },
+            {
+                "id": "claude-3-opus-20240229",
+                "name": "Claude 3 Opus",
+                "provider": "Anthropic",
+                "description": "최고 성능의 Claude 모델"
+            },
+            {
+                "id": "claude-3-sonnet-20240229",
+                "name": "Claude 3 Sonnet",
+                "provider": "Anthropic",
+                "description": "균형 잡힌 Claude 모델"
+            }
+        ]
+        
+        return JSONResponse(
+            status_code=200,
+            content={"success": True, "models": models}
+        )
+    except Exception as e:
+        logger.error(f"LLM 모델 목록 조회 중 오류 발생: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": f"LLM 모델 목록 조회 실패: {str(e)}"}
+        )
+
+# 브로커 LLM 상태 조회를 위한 프록시 API
+@app.get("/api/settings/llm-status")
+async def get_broker_llm_status():
+    """
+    브로커 LLM 상태 조회를 위한 프록시 API
+    """
+    try:
+        if not app.state.broker_client:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "success": False,
+                    "message": "브로커 클라이언트가 초기화되지 않았습니다.",
+                }
+            )
+        
+        # 브로커 서비스에 LLM 상태 조회 요청
+        response = await app.state.broker_client.get("/api/settings/llm-status")
+        
+        if response.status_code == 200:
+            return JSONResponse(
+                status_code=200,
+                content=response.json()
+            )
+        else:
+            return JSONResponse(
+                status_code=response.status_code,
+                content={
+                    "success": False,
+                    "message": f"브로커 LLM 상태 조회 실패: HTTP {response.status_code}"
+                }
+            )
+    except Exception as e:
+        logger.error(f"브로커 LLM 상태 조회 중 오류 발생: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={
+                "success": False,
+                "message": f"브로커 LLM 상태 조회 실패: {str(e)}"
+            }
+        )
+
+@app.get("/api/settings/test-llm-connection/{model_name}")
+async def test_llm_connection(model_name: str):
+    """
+    특정 LLM 모델의 연결 테스트 수행
+    """
+    try:
+        logger.info(f"LLM 모델 '{model_name}' 연결 테스트 시작")
+        
+        # 테스트 프롬프트
+        test_prompt = "간단한 테스트입니다. '테스트 성공'이라고 응답해주세요."
+        
+        # 임시 LLM 클라이언트 생성
+        from common.llm_client import LLMClient
+        test_client = LLMClient(default_model=model_name)
+        
+        # 비동기 호출
+        start_time = time.time()
+        try:
+            response = await test_client.aask(test_prompt)
+            execution_time = time.time() - start_time
+            
+            logger.info(f"LLM 모델 '{model_name}' 테스트 성공! 응답 시간: {execution_time:.2f}초")
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "success": True,
+                    "model": model_name,
+                    "response": response,
+                    "execution_time": execution_time,
+                    "message": f"LLM 모델 '{model_name}' 연결 테스트 성공"
+                }
+            )
+        except Exception as e:
+            execution_time = time.time() - start_time
+            logger.error(f"LLM 모델 '{model_name}' 연결 테스트 실패: {str(e)}")
+            return JSONResponse(
+                status_code=200,  # 200으로 유지하고 success: false로 표시
+                content={
+                    "success": False,
+                    "model": model_name,
+                    "error": str(e),
+                    "execution_time": execution_time,
+                    "message": f"LLM 모델 '{model_name}' 연결 테스트 실패: {str(e)}"
+                }
+            )
+    except Exception as e:
+        logger.error(f"LLM 모델 테스트 중 오류 발생: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": f"LLM 모델 테스트 중 오류 발생: {str(e)}"}
+        )
 
 # 서버 실행 (직접 실행 시)
 if __name__ == "__main__":

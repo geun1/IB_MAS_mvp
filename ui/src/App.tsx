@@ -6,6 +6,7 @@ import TaskMonitor from "./components/TaskMonitor";
 import AgentStatus from "./components/AgentStatus";
 import ResultViewer from "./components/ResultViewer";
 import ConversationList from "./components/ConversationList";
+import LLMConfigManager from "./components/LLMConfigManager";
 
 // 홈 페이지 컴포넌트 - 3단 레이아웃 UI로 변경
 const Home: React.FC = () => {
@@ -15,73 +16,125 @@ const Home: React.FC = () => {
     const [isHistorySidebarOpen, setIsHistorySidebarOpen] =
         useState<boolean>(false);
     const [isAgentPanelOpen, setIsAgentPanelOpen] = useState<boolean>(true);
+    const [isLLMPanelOpen, setIsLLMPanelOpen] = useState<boolean>(false);
 
     // 사이드바/패널 토글 함수
     const toggleHistorySidebar = () =>
         setIsHistorySidebarOpen(!isHistorySidebarOpen);
     const toggleAgentPanel = () => setIsAgentPanelOpen(!isAgentPanelOpen);
+    const toggleLLMPanel = () => setIsLLMPanelOpen(!isLLMPanelOpen);
 
     return (
         <div className="relative flex h-[calc(100vh-120px)]">
             {/* 가운데 채팅 영역 - 항상 가능한 많은 공간 차지 */}
             <div
-                className={`flex-grow flex flex-col transition-all duration-300 ${
-                    !isHistorySidebarOpen && !isAgentPanelOpen
-                        ? "mx-auto max-w-3xl"
-                        : ""
+                className={`flex-1 flex flex-col ${
+                    isHistorySidebarOpen ? "ml-64" : ""
                 }`}
             >
-                <RequestForm onTaskCreated={setCurrentTaskId} />
+                {/* 메인 요청 폼 */}
+                <div className="flex-1 overflow-auto">
+                    <RequestForm onTaskCreated={setCurrentTaskId} />
+                </div>
+
+                {/* 태스크 결과 뷰어 */}
+                {currentTaskId && (
+                    <div className="h-2/3 border-t border-gray-200">
+                        <ResultViewer taskId={currentTaskId} />
+                    </div>
+                )}
             </div>
 
-            {/* 오른쪽 에이전트 상태 패널 */}
+            {/* 오른쪽 에이전트 패널 */}
             <div
-                className={`absolute md:relative right-0 top-0 h-full bg-white z-10 shadow-lg transition-all duration-300 ${
-                    isAgentPanelOpen ? "w-80" : "w-0 md:w-12"
-                } overflow-hidden`}
+                className={`absolute right-0 top-0 h-full bg-gray-50 border-l border-gray-200 transition-all duration-300 ${
+                    isAgentPanelOpen ? "w-96" : "w-0 overflow-hidden"
+                }`}
             >
-                <div className="h-full flex flex-col">
-                    {/* 패널 토글 버튼 */}
+                <div className="flex justify-between items-center p-4 border-b border-gray-200">
+                    <h3 className="font-medium">에이전트 상태</h3>
+                    <button onClick={toggleAgentPanel}>
+                        <svg
+                            className="w-5 h-5 text-gray-500"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                        >
+                            <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M6 18L18 6M6 6l12 12"
+                            />
+                        </svg>
+                    </button>
+                </div>
+                <div className="p-4 overflow-auto h-[calc(100%-4rem)]">
+                    <AgentStatus />
+                </div>
+            </div>
+
+            {/* LLM 설정 패널 - 새로 추가 */}
+            <div
+                className={`absolute right-0 top-0 h-full bg-gray-50 border-l border-gray-200 transition-all duration-300 ${
+                    isLLMPanelOpen ? "w-96" : "w-0 overflow-hidden"
+                }`}
+            >
+                <div className="flex justify-between items-center p-4 border-b border-gray-200">
+                    <h3 className="font-medium">LLM 모델 설정</h3>
+                    <button onClick={toggleLLMPanel}>
+                        <svg
+                            className="w-5 h-5 text-gray-500"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                        >
+                            <path
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                strokeWidth={2}
+                                d="M6 18L18 6M6 6l12 12"
+                            />
+                        </svg>
+                    </button>
+                </div>
+                <div className="p-4 overflow-auto h-[calc(100%-4rem)]">
+                    <LLMConfigManager />
+                </div>
+            </div>
+
+            {/* 왼쪽 대화 기록 사이드바 */}
+            <div
+                className={`fixed left-0 top-0 h-full bg-gray-50 border-r border-gray-200 transition-all duration-300 ${
+                    isHistorySidebarOpen ? "w-64" : "w-0 overflow-hidden"
+                }`}
+            >
+                <div className="p-4">
+                    <ConversationList />
+                </div>
+            </div>
+
+            {/* 하단 제어 버튼들 */}
+            <div className="fixed bottom-0 left-0 right-0 flex justify-center p-2 bg-white border-t border-gray-200">
+                <div className="flex space-x-2">
+                    <button
+                        onClick={toggleHistorySidebar}
+                        className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded text-sm"
+                    >
+                        {isHistorySidebarOpen ? "기록 숨기기" : "기록 보기"}
+                    </button>
                     <button
                         onClick={toggleAgentPanel}
-                        className="p-2 bg-gray-100 hover:bg-gray-200 text-gray-700 w-full flex justify-center"
+                        className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded text-sm"
                     >
-                        {isAgentPanelOpen ? (
-                            <span className="flex items-center">
-                                <svg
-                                    xmlns="http://www.w3.org/2000/svg"
-                                    className="h-5 w-5 mr-2"
-                                    viewBox="0 0 20 20"
-                                    fill="currentColor"
-                                >
-                                    <path
-                                        fillRule="evenodd"
-                                        d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z"
-                                        clipRule="evenodd"
-                                    />
-                                </svg>
-                                에이전트 상태 닫기
-                            </span>
-                        ) : (
-                            <svg
-                                xmlns="http://www.w3.org/2000/svg"
-                                className="h-5 w-5"
-                                viewBox="0 0 20 20"
-                                fill="currentColor"
-                            >
-                                <path
-                                    fillRule="evenodd"
-                                    d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z"
-                                    clipRule="evenodd"
-                                />
-                            </svg>
-                        )}
+                        {isAgentPanelOpen ? "에이전트 숨기기" : "에이전트 보기"}
                     </button>
-
-                    {/* 에이전트 상태 컴포넌트 */}
-                    <div className="flex-grow overflow-auto">
-                        {isAgentPanelOpen && <AgentStatus />}
-                    </div>
+                    <button
+                        onClick={toggleLLMPanel}
+                        className="px-4 py-2 bg-blue-100 hover:bg-blue-200 rounded text-sm"
+                    >
+                        {isLLMPanelOpen ? "LLM 설정 숨기기" : "LLM 설정"}
+                    </button>
                 </div>
             </div>
         </div>
@@ -91,10 +144,10 @@ const Home: React.FC = () => {
 const App: React.FC = () => {
     return (
         <Router>
-            <div className="container mx-auto px-4 py-4 h-screen flex flex-col">
-                <header className="mb-4">
-                    <h1 className="text-2xl font-bold text-gray-800">
-                        멀티에이전트 서비스 시스템
+            <div className="min-h-screen bg-gray-50">
+                <header className="bg-white border-b border-gray-200 px-4 py-3">
+                    <h1 className="text-2xl font-semibold text-gray-800">
+                        다중 에이전트 시스템
                     </h1>
                     <p className="text-sm text-gray-600">
                         여러 에이전트들이 협업하여 복잡한 태스크를 처리합니다.
@@ -104,6 +157,10 @@ const App: React.FC = () => {
                 <div className="flex-grow overflow-hidden">
                     <Routes>
                         <Route path="/" element={<Home />} />
+                        <Route
+                            path="/llm-config"
+                            element={<LLMConfigManager />}
+                        />
                     </Routes>
                 </div>
             </div>

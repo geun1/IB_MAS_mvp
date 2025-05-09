@@ -484,3 +484,67 @@ class BrokerClient:
                 logger.info("기타 유형 결과 추출")
         
         return extracted 
+
+    async def update_llm_config(self, config: dict) -> Dict[str, Any]:
+        """
+        브로커의 LLM 설정 업데이트
+        
+        Args:
+            config: LLM 설정 정보
+            
+        Returns:
+            업데이트 결과
+        """
+        logger.info(f"브로커 LLM 설정 업데이트 요청: {config.get('modelName', 'unknown')}")
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    f"{self.broker_url}/api/settings/llm-config",
+                    json=config,
+                    timeout=10.0
+                )
+                
+                if response.status_code != 200:
+                    logger.error(f"브로커 LLM 설정 업데이트 오류 (상태 코드: {response.status_code}): {response.text}")
+                    return {
+                        "success": False,
+                        "message": f"브로커 LLM 설정 업데이트 실패: HTTP {response.status_code}"
+                    }
+                
+                return response.json()
+                
+        except Exception as e:
+            logger.error(f"브로커 LLM 설정 업데이트 중 오류: {str(e)}")
+            return {
+                "success": False,
+                "message": f"브로커 LLM 설정 업데이트 중 오류: {str(e)}"
+            }
+            
+    async def get(self, path: str, **kwargs) -> httpx.Response:
+        """
+        브로커 서비스에 GET 요청 전송
+        
+        Args:
+            path: API 경로
+            **kwargs: 추가 매개변수
+            
+        Returns:
+            HTTP 응답 객체
+        """
+        async with httpx.AsyncClient() as client:
+            return await client.get(f"{self.broker_url}{path}", **kwargs)
+            
+    async def post(self, path: str, **kwargs) -> httpx.Response:
+        """
+        브로커 서비스에 POST 요청 전송
+        
+        Args:
+            path: API 경로
+            **kwargs: 추가 매개변수
+            
+        Returns:
+            HTTP 응답 객체
+        """
+        async with httpx.AsyncClient() as client:
+            return await client.post(f"{self.broker_url}{path}", **kwargs) 

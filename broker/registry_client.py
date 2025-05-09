@@ -71,7 +71,7 @@ class RegistryClient:
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
-                    f"{self.registry_url}/agents/{agent_id}/ta***REMOVED***stats",
+                    f"{self.registry_url}/agents/{agent_id}/taREMOVEDstats",
                     json={
                         "status": task_status,
                         "execution_time": execution_time

@@ -26,6 +26,12 @@ export default defineConfig({
                 changeOrigin: true,
                 rewrite: (path) => path.replace(/^\/api\/broker/, ""),
             },
+            "/api/settings": {
+                target: "http://orchestrator:8000",
+                changeOrigin: true,
+                rewrite: (path) =>
+                    path.replace(/^\/api\/settings/, "/api/settings"),
+            },
         },
     },
 });

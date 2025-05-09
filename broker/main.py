@@ -3,7 +3,8 @@ import os
 import logging
 import time
 from typing import Dict, Any, List, Optional
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Query
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from broker.registry_client import RegistryClient
@@ -15,6 +16,7 @@ from broker.queue_manager import QueueManager
 from broker.registry_client import AgentParam
 from broker.models import TaskStatus, TaskResult, TaskList
 from broker.task_store import TaskStore
+from common.llm_client import LLMClient
 
 # 환경 변수 로드
 REGISTRY_URL = os.getenv("REGISTRY_URL", "http://registry:8000")
@@ -478,3 +480,140 @@ async def execute_task(task: ExecuteTaskRequest):
             "error": f"태스크 실행 오류: {str(e)}",
             "task_id": task.task_id
         }
+
+# LLM 설정 수신 엔드포인트
+@app.post("/api/settings/llm-config")
+async def update_llm_config(request: Request):
+    """
+    브로커의 LLM 설정 업데이트
+    """
+    try:
+        data = await request.json()
+        
+        # LLM 설정 정보 추출
+        model_name = data.get("modelName")
+        temperature = data.get("temperature", 0.7)
+        max_tokens = data.get("maxTokens", 1024)
+        
+        if not model_name:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": "모델 이름은 필수 항목입니다."}
+            )
+        
+        # LLM 클라이언트 설정 업데이트
+        if app.state.llm_client:
+            # 기존 클라이언트 인스턴스의 설정 업데이트
+            app.state.llm_client.llm_client = LLMClient(
+                default_model=model_name,
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            
+            # 로깅
+            logging.info(f"브로커 LLM 설정 업데이트: 모델={model_name}, 온도={temperature}, 최대토큰={max_tokens}")
+            
+            return JSONResponse(
+                status_code=200,
+                content={"success": True, "message": "LLM 설정이 업데이트되었습니다."}
+            )
+        else:
+            return JSONResponse(
+                status_code=500,
+                content={"success": False, "message": "LLM 클라이언트가 초기화되지 않았습니다."}
+            )
+    except Exception as e:
+        logging.error(f"LLM 설정 업데이트 중 오류 발생: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": f"LLM 설정 업데이트 실패: {str(e)}"}
+        )
+
+# LLM 로그 엔드포인트
+@app.get("/api/settings/llm-status")
+async def get_llm_status():
+    """
+    현재 LLM 설정 및 상태 조회
+    """
+    try:
+        if not app.state.llm_client or not app.state.llm_client.llm_client:
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "success": True,
+                    "initialized": False,
+                    "message": "LLM 클라이언트가 초기화되지 않았습니다."
+                }
+            )
+        
+        # 현재 LLM 클라이언트 설정 조회
+        client = app.state.llm_client.llm_client
+        
+        return JSONResponse(
+            status_code=200,
+            content={
+                "success": True,
+                "initialized": True,
+                "model": client.default_model,
+                "temperature": client.temperature,
+                "max_tokens": client.max_tokens,
+                "last_update": time.time()  # 현재 시간 (마지막 업데이트 시간 대신)
+            }
+        )
+    except Exception as e:
+        logging.error(f"LLM 상태 조회 중 오류 발생: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": f"LLM 상태 조회 실패: {str(e)}"}
+        )
+
+@app.get("/api/settings/test-llm-connection/{model_name}")
+async def test_llm_connection(model_name: str):
+    """
+    특정 LLM 모델의 연결 테스트 수행
+    """
+    try:
+        logging.info(f"LLM 모델 '{model_name}' 연결 테스트 시작")
+        
+        # 테스트 프롬프트
+        test_prompt = "간단한 테스트입니다. '테스트 성공'이라고 응답해주세요."
+        
+        # 임시 LLM 클라이언트 생성
+        test_client = LLMClient(default_model=model_name)
+        
+        # 비동기 호출
+        start_time = time.time()
+        try:
+            response = await test_client.aask(test_prompt)
+            execution_time = time.time() - start_time
+            
+            logging.info(f"LLM 모델 '{model_name}' 테스트 성공! 응답 시간: {execution_time:.2f}초")
+            return JSONResponse(
+                status_code=200,
+                content={
+                    "success": True,
+                    "model": model_name,
+                    "response": response,
+                    "execution_time": execution_time,
+                    "message": f"LLM 모델 '{model_name}' 연결 테스트 성공"
+                }
+            )
+        except Exception as e:
+            execution_time = time.time() - start_time
+            logging.error(f"LLM 모델 '{model_name}' 연결 테스트 실패: {str(e)}")
+            return JSONResponse(
+                status_code=200,  # 200으로 유지하고 success: false로 표시
+                content={
+                    "success": False,
+                    "model": model_name,
+                    "error": str(e),
+                    "execution_time": execution_time,
+                    "message": f"LLM 모델 '{model_name}' 연결 테스트 실패: {str(e)}"
+                }
+            )
+    except Exception as e:
+        logging.error(f"LLM 모델 테스트 중 오류 발생: {str(e)}")
+        return JSONResponse(
+            status_code=500,
+            content={"success": False, "message": f"LLM 모델 테스트 중 오류 발생: {str(e)}"}
+        )
