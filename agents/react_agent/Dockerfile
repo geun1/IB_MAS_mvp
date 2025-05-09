@@ -13,7 +13,7 @@ RUN mkdir -p /app/agent /app/common
 
 # 의존성 파일 복사 및 설치
 COPY ./agents/react_agent/requirements.txt /app/agent/
-RUN pip install --no-cache-dir -r /app/agent/requirements.txt
+RUN pip install --no-cache-dir -r /app/agent/requirements.txt && pip install --no-cache-dir litellm==1.67.2
 
 # 공통 모듈 복사
 COPY ./common/ /app/common/

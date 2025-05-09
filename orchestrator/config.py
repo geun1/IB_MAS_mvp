@@ -4,14 +4,19 @@
 import os
 import logging
 from typing import Dict, Any
+from pathlib import Path
 from dotenv import load_dotenv
 
 # 로깅 설정
 logger = logging.getLogger(__name__)
 
+# 프로젝트 루트 디렉토리 찾기
+project_root = Path(__file__).parent.parent.parent
+env_path = project_root / ".env"
+
 # .env 파일 로드
-load_dotenv("../../.env")
-logger.info("환경 변수 로드 완료")
+load_dotenv(env_path)
+logger.info(f"환경 변수 로드 완료: {env_path}")
 
 # API 설정
 REGISTRY_URL = os.getenv("REGISTRY_URL", "http://registry:8000")
@@ -25,7 +30,6 @@ logger.info(f"API 키 설정 상태: {'설정됨' if LLM_API_KEY else '설정되
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4o-mini")
 LLM_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.7"))
 LLM_MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "1024"))
-
 
 # 앱 설정
 DEBUG = os.getenv("DEBUG", "False").lower() == "true"

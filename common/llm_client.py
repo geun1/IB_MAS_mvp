@@ -3,10 +3,20 @@ from typing import Dict, List, Optional, Any, Union
 import logging
 import asyncio
 import time
+from pathlib import Path
 
 # litellm 임포트
 from litellm import completion, acompletion
 from litellm.utils import Message
+
+from dotenv import load_dotenv
+
+# 프로젝트 루트 디렉토리 찾기
+project_root = Path(__file__).parent.parent.parent
+env_path = project_root / ".env"
+
+# .env 파일 로드
+load_dotenv(env_path)
 
 class LLMClient:
     """
@@ -38,7 +48,6 @@ class LLMClient:
             timeout: 요청 타임아웃(초)
         """
         self.default_model = default_model
-        self.api_key = api_key
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.max_retries = max_retries
@@ -48,6 +57,25 @@ class LLMClient:
         
         # 로거 설정
         self.logger = logging.getLogger("llm_client")
+        
+        # API 키 설정
+        if api_key:
+            self.api_key = api_key
+        else:
+            # 모델에 따라 적절한 API 키 선택
+            if "gpt" in default_model:
+                self.api_key = os.getenv("OPENAI_API_KEY")
+            elif "claude" in default_model:
+                self.api_key = os.getenv("ANTHROPIC_API_KEY")
+            else:
+                self.api_key = None
+        
+        # API 키 설정 로깅
+        if self.api_key:
+            masked_key = f"{self.api_key[:4]}...{self.api_key[-4:]}" if len(self.api_key) > 8 else "***"
+            self.logger.info(f"API 키 설정됨: {masked_key}")
+        else:
+            self.logger.warning("API 키가 설정되지 않았습니다!")
         
     def complete(
         self,
@@ -177,6 +205,9 @@ class LLMClient:
         self, 
         prompt: str, 
         system_prompt: Optional[str] = None,
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
         **kwargs
     ) -> str:
         """
@@ -185,6 +216,9 @@ class LLMClient:
         Args:
             prompt: 유저 질문
             system_prompt: 시스템 프롬프트 (선택 사항)
+            model: 사용할 모델 (기본값은 인스턴스 생성 시 설정값)
+            temperature: 생성 랜덤성
+            max_tokens: 최대 생성 토큰 수
             
         Returns:
             생성된 텍스트 (문자열)
@@ -196,7 +230,19 @@ class LLMClient:
         
         messages.append({"role": "user", "content": prompt})
         
-        response = await self.acomplete(messages=messages, **kwargs)
+        _model = model or self.default_model
+        _temperature = temperature if temperature is not None else self.temperature
+        _max_tokens = max_tokens if max_tokens is not None else self.max_tokens
+        
+        self.logger.info(f"LLM 호출 설정 - model: {_model}, temperature: {_temperature}, max_tokens: {_max_tokens}")
+        
+        response = await self.acomplete(
+            messages=messages,
+            model=_model,
+            temperature=_temperature,
+            max_tokens=_max_tokens,
+            **kwargs
+        )
         return response["choices"][0]["message"]["content"]
     
     async def chat_completion(

@@ -11,46 +11,52 @@ export interface LLMConfig {
 
 export const AVAILABLE_LLM_MODELS = [
     {
-        id: "gpt-4o",
-        name: "GPT-4o",
+        id: "gpt-3.5-turbo",
+        name: "GPT-3.5 Turbo",
         provider: "OpenAI",
-        description: "가장 강력한 GPT-4 Omni 모델",
+        description: "OpenAI의 GPT-3.5 Turbo 모델",
+    },
+    {
+        id: "gpt-4",
+        name: "GPT-4",
+        provider: "OpenAI",
+        description: "OpenAI의 GPT-4 모델",
     },
     {
         id: "gpt-4o-mini",
         name: "GPT-4o Mini",
         provider: "OpenAI",
-        description: "경제적인 GPT-4o 버전",
+        description: "OpenAI의 GPT-4o Mini 모델",
     },
     {
-        id: "gpt-3.5-turbo",
-        name: "GPT-3.5 Turbo",
-        provider: "OpenAI",
-        description: "빠르고 경제적인 모델",
-    },
-    {
-        id: "ollama/llama3:latest",
-        name: "Llama 3",
-        provider: "Local (Ollama)",
-        description: "로컬에서 실행되는 Llama 3 모델",
-    },
-    {
-        id: "ollama/mistral:latest",
-        name: "Mistral",
-        provider: "Local (Ollama)",
-        description: "로컬에서 실행되는 Mistral 모델",
+        id: "claude-3-5-sonnet-20240620",
+        name: "Claude 3 Sonnet",
+        provider: "Anthropic",
+        description: "Anthropic의 Claude 3 Sonnet 모델",
     },
     {
         id: "claude-3-opus-20240229",
         name: "Claude 3 Opus",
         provider: "Anthropic",
-        description: "최고 성능의 Claude 모델",
+        description: "Anthropic의 Claude 3 Opus 모델",
     },
     {
-        id: "claude-3-sonnet-20240229",
-        name: "Claude 3 Sonnet",
+        id: "claude-3-haiku-20240307",
+        name: "Claude 3 Haiku",
         provider: "Anthropic",
-        description: "균형 잡힌 Claude 모델",
+        description: "Anthropic의 Claude 3 Haiku 모델",
+    },
+    {
+        id: "ollama/llama3:latest",
+        name: "Llama 3",
+        provider: "Ollama",
+        description: "Ollama의 Llama 3 모델",
+    },
+    {
+        id: "ollama/mistral:latest",
+        name: "Mistral",
+        provider: "Ollama",
+        description: "Ollama의 Mistral 모델",
     },
 ];
 

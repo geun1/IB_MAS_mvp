@@ -7,6 +7,7 @@ import time
 import uuid
 import secrets
 import json
+import os
 from typing import Dict, List, Optional, Any
 from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect, Request
 from pydantic import BaseModel
@@ -1114,7 +1115,7 @@ async def set_llm_config(request: Request):
         app.state.llm_configs = getattr(app.state, "llm_configs", {})
         app.state.llm_configs[component] = config
         
-        logger.info(f"LLM 설정 업데이트: {component} => {config['modelName']}")
+        logger.info(f"LLM 설정 업데이트: {component} => {config}")
         
         # 오케스트레이터 LLM 클라이언트 설정 업데이트 (즉시 적용)
         if component == "orchestrator" and hasattr(app.state, "llm_client"):
@@ -1127,6 +1128,13 @@ async def set_llm_config(request: Request):
             app.state.llm_client.max_tokens = max_tokens
             
             logger.info(f"오케스트레이터 LLM 설정 적용됨: 모델={model_name}, 온도={temperature}, 최대토큰={max_tokens}")
+            
+            # 설정 변경 후 연결 테스트 수행
+            try:
+                test_result = await app.state.llm_client.test_connection()
+                logger.info(f"설정 변경 후 연결 테스트 결과: {test_result}")
+            except Exception as e:
+                logger.error(f"설정 변경 후 연결 테스트 실패: {str(e)}")
         
         # Broker 서비스에 설정 전파 (필요시)
         if component == "broker" and app.state.broker_client:
@@ -1286,24 +1294,38 @@ async def get_broker_llm_status():
         )
 
 @app.get("/api/settings/test-llm-connection/{model_name}")
-async def test_llm_connection(model_name: str):
+async def test_llm_connection(model_name: str, temperature: float = None, max_tokens: int = None):
     """
     특정 LLM 모델의 연결 테스트 수행
+    
+    Args:
+        model_name: 테스트할 모델 이름
+        temperature: 온도 설정 (선택적)
+        max_tokens: 최대 토큰 수 (선택적)
     """
     try:
-        logger.info(f"LLM 모델 '{model_name}' 연결 테스트 시작")
+        logger.info(f"LLM 모델 '{model_name}' 연결 테스트 시작 (temperature: {temperature}, max_tokens: {max_tokens})")
         
         # 테스트 프롬프트
         test_prompt = "간단한 테스트입니다. '테스트 성공'이라고 응답해주세요."
-        
+            
         # 임시 LLM 클라이언트 생성
         from common.llm_client import LLMClient
+        
+        # 모델 ID 처리
+        # if model_name.startswith("claude-") and not model_name.startswith("anthropic/"):
+        #     model_name = f"anthropic/{model_name}"
+            
         test_client = LLMClient(default_model=model_name)
         
         # 비동기 호출
         start_time = time.time()
         try:
-            response = await test_client.aask(test_prompt)
+            response = await test_client.aask(
+                test_prompt,
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
             execution_time = time.time() - start_time
             
             logger.info(f"LLM 모델 '{model_name}' 테스트 성공! 응답 시간: {execution_time:.2f}초")

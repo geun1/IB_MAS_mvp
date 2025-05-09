@@ -11,6 +11,9 @@ import uuid
 from typing import Dict, Any, List, Optional, Tuple
 from fastapi import FastAPI, Request, Body, HTTPException, Depends
 from pydantic import BaseModel, Field
+from dotenv import load_dotenv
+
+load_dotenv("../../.env")
 
 # 공통 모듈 임포트
 try:

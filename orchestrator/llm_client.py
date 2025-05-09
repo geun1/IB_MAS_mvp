@@ -5,6 +5,7 @@ import logging
 import json
 import os
 from typing import Dict, List, Any, Optional, Union
+from pathlib import Path
 
 # 공통 LLM 클라이언트 임포트
 from common.llm_client import LLMClient
@@ -48,7 +49,7 @@ class OrchestratorLLMClient:
         ]  # 여러 대체 모델 설정
         self.temperature = LLM_TEMPERATURE
         self.max_tokens = LLM_MAX_TOKENS
-        logger.info(f"LLM 클라이언트 초기화 완료 (기본 모델: {self.model})")
+        logger.info(f"LLM 클라이언트 초기화 완료 (기본 모델: {self.model}, temperature: {self.temperature}, max_tokens: {self.max_tokens})")
     
     def _format_conversation_context(self, messages: List[Dict[str, Any]]) -> str:
         """
@@ -96,17 +97,15 @@ class OrchestratorLLMClient:
                 conversation_context=formatted_context
             )
             
-            logger.info(f"LLM 태스크 분해 프롬프트:\n{prompt}") # 프롬프트 로깅 추가
+            logger.info(f"LLM 태스크 분해 프롬프트:\n{prompt}")
+            logger.info(f"LLM 설정 - temperature: {self.temperature}, max_tokens: {self.max_tokens}")
 
-            # fallback_models 인자를 별도로 처리하지 않고 기본 모델만 사용
-            # OpenAI API가 fallback_models 인자를 인식하지 못하는 문제 해결
-            # ask 대신 비동기 메서드인 aask 사용
             response_content = await self.client.aask(
                 prompt=prompt,
                 model=self.model,
                 temperature=self.temperature,
                 max_tokens=self.max_tokens,
-                response_format={"type": "json_object"} # JSON 모드 요청
+                response_format={"type": "json_object"}
             )
             
             logger.info(f"LLM 태스크 분해 응답 원문:\n{response_content}") # 응답 원문 로깅 추가
@@ -182,6 +181,7 @@ class OrchestratorLLMClient:
         """
         try:
             logger.info("LLM API 호출: 결과 통합")
+            logger.info(f"LLM 설정 - temperature: {self.temperature}, max_tokens: {self.max_tokens}")
             
             # 결과 통합 프롬프트 생성
             prompt = create_result_integration_prompt(original_query, tasks_results)
@@ -189,11 +189,11 @@ class OrchestratorLLMClient:
             # OpenAI API 호환성 문제로 인해 fallback 모델 로직을 수동으로 구현
             try:
                 logger.info(f"모델 시도 중: {self.model}")
-                # 비동기 메서드 aask 사용
                 response = await self.client.aask(
                     prompt=prompt, 
                     model=self.model, 
-                    temperature=self.temperature
+                    temperature=self.temperature,
+                    max_tokens=self.max_tokens
                 )
                 logger.info(f"모델 {self.model} 성공!")
                 
@@ -209,11 +209,11 @@ class OrchestratorLLMClient:
                 for fallback_model in self.fallback_models:
                     try:
                         logger.info(f"폴백 모델 시도 중: {fallback_model}")
-                        # 비동기 메서드 aask 사용
                         response = await self.client.aask(
                             prompt=prompt, 
                             model=fallback_model, 
-                            temperature=self.temperature
+                            temperature=self.temperature,
+                            max_tokens=self.max_tokens
                         )
                         logger.info(f"폴백 모델 {fallback_model} 성공!")
                         
@@ -265,4 +265,40 @@ class OrchestratorLLMClient:
             
         except Exception as e:
             logger.error(f"연결 테스트 중 오류 발생: {str(e)}")
-            return {"status": "error", "error": str(e)} 
+            return {"status": "error", "error": str(e)}
+
+    async def aask(self, prompt: str, model: str = None, temperature: float = None, max_tokens: int = None) -> str:
+        """
+        LLM에 비동기 요청을 보내고 응답을 받음
+        
+        Args:
+            prompt: 프롬프트
+            model: 사용할 모델 (기본값: self.model)
+            temperature: 온도 설정 (기본값: self.temperature)
+            max_tokens: 최대 토큰 수 (기본값: self.max_tokens)
+            
+        Returns:
+            LLM 응답 문자열
+        """
+        try:
+            # 기본값 설정
+            model = model or self.model
+            temperature = temperature if temperature is not None else self.temperature
+            max_tokens = max_tokens if max_tokens is not None else self.max_tokens
+            
+            logger.info(f"LLM 요청 - 모델: {model}, temperature: {temperature}, max_tokens: {max_tokens}")
+            
+            # LLM 클라이언트 호출
+            response = await self.client.aask(
+                prompt=prompt,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            
+            logger.info(f"LLM 응답 수신 (길이: {len(response)})")
+            return response
+            
+        except Exception as e:
+            logger.error(f"LLM 요청 중 오류 발생: {str(e)}")
+            raise 

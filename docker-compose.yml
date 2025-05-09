@@ -72,6 +72,9 @@ services:
             - REDIS_PORT=6379
             - REGISTRY_URL=http://registry:8000
             - BROKER_URL=http://broker:8000
+            - OPENAI_API_KEY=${OPENAI_API_KEY}
+            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+
         volumes:
             - ./orchestrator:/app/orchestrator
             - ./common:/app/common
@@ -94,6 +97,8 @@ services:
             - RABBITMQ_HOST=rabbitmq
             - RABBITMQ_PORT=5672
             - REGISTRY_URL=http://registry:8000
+            - OPENAI_API_KEY=${OPENAI_API_KEY}
+            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
         depends_on:
             - redis
             - rabbitmq

@@ -41,10 +41,8 @@ HEARTBEAT_INTERVAL = int(os.getenv("HEARTBEAT_INTERVAL", "20"))  # 기본값 20�
 
 # 설정 저장소 (설정이 제공되지 않았을 때를 대비한 기본값)
 DEFAULT_CONFIG = {
-    # "api_key": os.getenv("GOOGLE_SEARCH_API_KEY", ""),
-    # "cx": os.getenv("GOOGLE_SEARCH_CX", "")
-    "api_key": "AIzaSyCcEtvfrhIcJM7uCForostcjtMGlqabMXw",
-    "cx": "b5349ca185e00462d"
+    "api_key": os.getenv("GOOGLE_SEARCH_API_KEY", ""),
+    "cx": os.getenv("GOOGLE_SEARCH_CX", "")
 }
 
 # 모델 정의

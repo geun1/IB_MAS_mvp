@@ -180,10 +180,17 @@ const LLMConfigManager: React.FC<LLMConfigManagerProps> = ({
             const testComponent =
                 componentId === "broker" ? "broker" : "orchestrator";
 
+            // 현재 설정된 temperature와 maxTokens 값 가져오기
+            const config = configs[componentId] || {};
+            const temperature = config.temperature || 0.7;
+            const maxTokens = config.maxTokens || 1024;
+
             // API 호출하여 모델 테스트
             const result = await llmConfigApi.testLLMConnection(
                 modelName,
-                testComponent
+                testComponent,
+                temperature,
+                maxTokens
             );
 
             // 테스트 결과 저장

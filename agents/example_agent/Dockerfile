@@ -8,7 +8,7 @@ COPY ./common/ /app/common/
 COPY ./agents/example_agent/requirements.txt .
 
 # 의존성 설치
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && pip install --no-cache-dir litellm==1.67.2
 
 # 에이전트 코드 복사
 COPY ./agents/example_agent/main.py /app/agent/

@@ -1,4 +1,4 @@
-version: "3.8"
+version: "3.9"
 
 services:
     web_search_agent:
@@ -46,6 +46,8 @@ services:
             - PORT=8000
             - LOG_LEVEL=DEBUG
             - PYTHONPATH=/app
+            - OPENAI_API_KEY=${OPENAI_API_KEY}
+            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
         volumes:
             - ../common:/app/common
             - ./writer:/app/agent
@@ -74,9 +76,11 @@ services:
             - RABBITMQ_PORT=5672
             - CONTAINER_NAME=stock_data_agent
             - PORT=8000
-            - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY:-XVOHLPWZNWVPORLZ}
+            - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY}
             - LOG_LEVEL=DEBUG
             - PYTHONPATH=/app
+            - OPENAI_API_KEY=${OPENAI_API_KEY}
+            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
         volumes:
             - ../common:/app/common
             - ./stock_data_agent:/app/agent
@@ -107,6 +111,8 @@ services:
             - PORT=8000
             - LOG_LEVEL=DEBUG
             - PYTHONPATH=/app
+            - OPENAI_API_KEY=${OPENAI_API_KEY}
+            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
         volumes:
             - ../common:/app/common
             - ./code_generator:/app/agent
@@ -137,6 +143,8 @@ services:
             - PORT=8000
             - LOG_LEVEL=${LOG_LEVEL:-INFO}
             - PYTHONPATH=/app
+            - OPENAI_API_KEY=${OPENAI_API_KEY}
+            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
         volumes:
             - ../common:/app/common
             - ./example_agent:/app/agent
@@ -169,6 +177,8 @@ services:
             - PORT=8030
             - PYTHONPATH=/app
             - LOG_LEVEL=INFO
+            - OPENAI_API_KEY=${OPENAI_API_KEY}
+            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
         networks:
             - agent-network
             - multiagent-network
@@ -211,6 +221,8 @@ services:
             - PORT=8000
             - LOG_LEVEL=DEBUG
             - PYTHONPATH=/app
+            - OPENAI_API_KEY=${OPENAI_API_KEY}
+            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
         volumes:
             - ../common:/app/common
             - ./stock_analysis_agent:/app/agent

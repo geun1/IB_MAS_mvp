@@ -79,7 +79,9 @@ export const llmConfigApi = {
      */
     async testLLMConnection(
         modelName: string,
-        component: string = "orchestrator"
+        component: string = "orchestrator",
+        temperature?: number,
+        maxTokens?: number
     ) {
         try {
             // 오케스트레이터나 브로커 중 하나를 선택해 테스트 요청
@@ -88,7 +90,12 @@ export const llmConfigApi = {
                     ? "/api/broker/settings/test-llm-connection/"
                     : "/api/settings/test-llm-connection/";
 
-            const response = await axios.get(`${endpoint}${modelName}`);
+            const response = await axios.get(`${endpoint}${modelName}`, {
+                params: {
+                    temperature,
+                    max_tokens: maxTokens,
+                },
+            });
             return response.data;
         } catch (error: any) {
             console.error(`LLM 모델 ${modelName} 연결 테스트 중 오류:`, error);

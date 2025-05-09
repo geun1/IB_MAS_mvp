@@ -19,7 +19,7 @@ COPY ./common/ /app/common/
 
 # 의존성 파일 복사 및 설치
 COPY ./agents/data_analysis_agent/requirements.txt /app/agent/
-RUN pip install --no-cache-dir -r /app/agent/requirements.txt
+RUN pip install --no-cache-dir -r /app/agent/requirements.txt && pip install --no-cache-dir litellm==1.67.2
 
 # 에이전트 파일 복사
 COPY ./agents/data_analysis_agent/ /app/agent/
