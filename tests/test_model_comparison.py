@@ -19,9 +19,9 @@ def compare_models():
     models_to_test = [
         # "gpt-3.5-turbo",     # OpenAI API 키 필요
         "gpt-4o-mini",     # OpenAI API 키 필요
-        # "claude-3-haiku-20240307",  # Anthropic API 키 필요
-        "ollama/llama3.1:8b",     # Ollama 설치 필요
-        "ollama/gemma:2b"
+        "claude-3-haiku-20240307",  # Anthropic API 키 필요
+        "ollama/tinyllama",     # Ollama 설치 필요
+        # "ollama/gemma:2b"
     ]
     
     # 테스트할 프롬프트 목록

@@ -5,6 +5,7 @@ import time
 from typing import Dict, Any, List, Optional
 from fastapi import FastAPI, HTTPException, BackgroundTasks, Query, Request
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from broker.registry_client import RegistryClient
@@ -56,6 +57,15 @@ app = FastAPI(
     root_path=""
 )
 
+# CORS 미들웨어 추가
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],  # 프론트엔드 개발 서버
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # 로깅 설정 강화
 logging.basicConfig(
     level=logging.INFO,
@@ -67,7 +77,16 @@ logging.basicConfig(
 async def startup_event():
     app.state.registry_client = RegistryClient(REGISTRY_URL)
     app.state.task_router = TaskRouter(app.state.registry_client)
-    app.state.llm_client = BrokerLLMClient()
+    
+    # LLM 클라이언트 초기화 시 모델별 설정 적용
+    llm_config = {
+        "ollama/tinyllama": {
+            "temperature": 0.5,
+            "max_tokens": 512,
+            "top_p": 0.9
+        }
+    }
+    app.state.llm_client = BrokerLLMClient(model_configs=llm_config)
     app.state.param_processor = ParamProcessor(app.state.llm_client)
     app.state.agent_client = AgentClient()
     
@@ -568,18 +587,26 @@ async def get_llm_status():
         )
 
 @app.get("/api/settings/test-llm-connection/{model_name}")
-async def test_llm_connection(model_name: str):
+async def test_llm_connection(
+    model_name: str,
+    temperature: Optional[float] = None,
+    max_tokens: Optional[int] = None
+):
     """
     특정 LLM 모델의 연결 테스트 수행
     """
     try:
-        logging.info(f"LLM 모델 '{model_name}' 연결 테스트 시작")
+        logging.info(f"LLM 모델 '{model_name}' 연결 테스트 시작 (temperature: {temperature}, max_tokens: {max_tokens})")
         
         # 테스트 프롬프트
         test_prompt = "간단한 테스트입니다. '테스트 성공'이라고 응답해주세요."
         
         # 임시 LLM 클라이언트 생성
-        test_client = LLMClient(default_model=model_name)
+        test_client = LLMClient(
+            default_model=model_name,
+            temperature=temperature,
+            max_tokens=max_tokens
+        )
         
         # 비동기 호출
         start_time = time.time()

@@ -5,8 +5,9 @@ from typing import Dict, Any, List, Optional
 from common.llm_client import LLMClient  # 프로젝트 공통 LLM 클라이언트 임포트
 
 class BrokerLLMClient:
-    def __init__(self, default_model: str = "gpt-4o-mini"):
+    def __init__(self, default_model: str = "gpt-4o-mini", model_configs: Optional[Dict[str, Any]] = None):
         self.llm_client = LLMClient(default_model=default_model)
+        self.model_configs = model_configs or {}
         self.logger = logging.getLogger("broker_llm_client")
     
     async def infer_missing_params(self, task_description: str, 

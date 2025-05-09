@@ -1130,11 +1130,11 @@ async def set_llm_config(request: Request):
             logger.info(f"오케스트레이터 LLM 설정 적용됨: 모델={model_name}, 온도={temperature}, 최대토큰={max_tokens}")
             
             # 설정 변경 후 연결 테스트 수행
-            try:
-                test_result = await app.state.llm_client.test_connection()
-                logger.info(f"설정 변경 후 연결 테스트 결과: {test_result}")
-            except Exception as e:
-                logger.error(f"설정 변경 후 연결 테스트 실패: {str(e)}")
+            # try:
+            #     test_result = await app.state.llm_client.test_connection()
+            #     logger.info(f"설정 변경 후 연결 테스트 결과: {test_result}")
+            # except Exception as e:
+            #     logger.error(f"설정 변경 후 연결 테스트 실패: {str(e)}")
         
         # Broker 서비스에 설정 전파 (필요시)
         if component == "broker" and app.state.broker_client:

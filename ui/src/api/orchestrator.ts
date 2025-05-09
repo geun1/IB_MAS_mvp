@@ -214,6 +214,26 @@ export const orchestratorApi = {
             throw error;
         }
     },
+
+    // 대화 상태 조회 API
+    getConversationStatus: async (conversationId: string): Promise<any> => {
+        if (!conversationId) {
+            console.error("[API] 대화 상태 조회 실패: 대화 ID가 없습니다.");
+            throw new Error("대화 ID가 필요합니다.");
+        }
+
+        console.log(`[API] 대화 상태 요청: 대화=${conversationId}`);
+
+        try {
+            const response = await apiClient.get(
+                `${BASE_URL}/conversations/${conversationId}/status`
+            );
+            return response.data;
+        } catch (error) {
+            console.error(`[API] 대화 상태 조회 오류:`, error);
+            throw error;
+        }
+    },
 };
 
 // 고유한 대화 ID 생성 함수

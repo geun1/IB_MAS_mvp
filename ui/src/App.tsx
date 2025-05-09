@@ -38,11 +38,11 @@ const Home: React.FC = () => {
                 </div>
 
                 {/* 태스크 결과 뷰어 */}
-                {currentTaskId && (
+                {/* {currentTaskId && (
                     <div className="h-2/3 border-t border-gray-200">
                         <ResultViewer taskId={currentTaskId} />
                     </div>
-                )}
+                )} */}
             </div>
 
             {/* 오른쪽 에이전트 패널 */}
@@ -115,27 +115,20 @@ const Home: React.FC = () => {
             </div>
 
             {/* 하단 제어 버튼들 */}
-            <div className="fixed bottom-0 left-0 right-0 flex justify-center p-2 bg-white border-t border-gray-200">
-                <div className="flex space-x-2">
-                    <button
-                        onClick={toggleHistorySidebar}
-                        className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded text-sm"
-                    >
-                        {isHistorySidebarOpen ? "기록 숨기기" : "기록 보기"}
-                    </button>
-                    <button
-                        onClick={toggleAgentPanel}
-                        className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded text-sm"
-                    >
-                        {isAgentPanelOpen ? "에이전트 숨기기" : "에이전트 보기"}
-                    </button>
-                    <button
-                        onClick={toggleLLMPanel}
-                        className="px-4 py-2 bg-blue-100 hover:bg-blue-200 rounded text-sm"
-                    >
-                        {isLLMPanelOpen ? "LLM 설정 숨기기" : "LLM 설정"}
-                    </button>
-                </div>
+            {/* 하단 제어 버튼들 - 오른쪽 사이드에 배치 */}
+            <div className="fixed top-5 right-5 flex flex-col space-y-2">
+                <button
+                    onClick={toggleAgentPanel}
+                    className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded text-sm shadow-md"
+                >
+                    {isAgentPanelOpen ? "에이전트 숨기기" : "에이전트 보기"}
+                </button>
+                <button
+                    onClick={toggleLLMPanel}
+                    className="px-4 py-2 bg-blue-100 hover:bg-blue-200 rounded text-sm shadow-md"
+                >
+                    {isLLMPanelOpen ? "LLM 설정 숨기기" : "LLM 설정"}
+                </button>
             </div>
         </div>
     );

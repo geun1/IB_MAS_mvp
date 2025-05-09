@@ -2,11 +2,14 @@
  * LLMConfigService - LLM 모델 선택 및 설정 관리를 위한 서비스
  */
 
+import axios from "axios";
+
 export interface LLMConfig {
     componentName: string; // 컴포넌트 이름 (orchestrator, broker, specific_agent 등)
     modelName: string; // 선택된 모델 이름
     temperature?: number; // 온도 설정 (선택적)
     maxTokens?: number; // 최대 토큰 수 (선택적)
+    topP?: number;
 }
 
 export const AVAILABLE_LLM_MODELS = [
@@ -46,18 +49,17 @@ export const AVAILABLE_LLM_MODELS = [
         provider: "Anthropic",
         description: "Anthropic의 Claude 3 Haiku 모델",
     },
-    {
-        id: "ollama/llama3:latest",
-        name: "Llama 3",
-        provider: "Ollama",
-        description: "Ollama의 Llama 3 모델",
-    },
-    {
-        id: "ollama/mistral:latest",
-        name: "Mistral",
-        provider: "Ollama",
-        description: "Ollama의 Mistral 모델",
-    },
+    // {
+    //     id: "tinyllama",
+    //     name: "TinyLlama",
+    //     provider: "Ollama",
+    //     description: "local model 확인용 작은 모델",
+    //     defaultConfig: {
+    //         temperature: 0.5,
+    //         maxTokens: 512,
+    //         topP: 0.9,
+    //     },
+    // },
 ];
 
 class LLMConfigService {
@@ -176,6 +178,30 @@ class LLMConfigService {
             });
 
         return result;
+    }
+
+    async testLLMConnection(
+        modelName: string,
+        temperature?: number,
+        maxTokens?: number
+    ): Promise<any> {
+        try {
+            const params = new URLSearchParams();
+            if (temperature !== undefined)
+                params.append("temperature", temperature.toString());
+            if (maxTokens !== undefined)
+                params.append("max_tokens", maxTokens.toString());
+
+            const response = await axios.get(
+                `${
+                    process.env.VITE_BROKER_URL || "http://localhost:8000"
+                }/api/settings/test-llm-connection/${modelName}?${params.toString()}`
+            );
+            return response.data;
+        } catch (error) {
+            console.error(`LLM 모델 ${modelName} 연결 테스트 중 오류:`, error);
+            throw error;
+        }
     }
 }
 
