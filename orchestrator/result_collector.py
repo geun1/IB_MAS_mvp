@@ -496,56 +496,37 @@ class ResultCollector:
                     # 직접 태스크에 의존성 결과 추가 (브로커 컨텍스트 외에도 직접 전달)
                     task["depends_results"] = depends_results
                     logger.info(f"[{task_uid}] 태스크에 직접 의존성 결과를 추가했습니다.")
+            
+            # previous_results가 전달된 경우 처리
+            if "params" in task and "previous_results" in task["params"]:
+                previous_results = task["params"]["previous_results"]
+                if previous_results and isinstance(previous_results, list):
+                    logger.info(f"[{task_uid}] previous_results가 전달됨: {len(previous_results)}개")
                     
-                    # 일반화된 의존성 데이터 추출 및 처리
-                    processed_data = self.extract_data_from_dependencies(depends_results)
-                    if processed_data:
-                        # 추출된 데이터 로깅
-                        for source_role, data_dict in processed_data.items():
-                            for data_key, data_value in data_dict.items():
-                                # 데이터 유형 및 크기 정보 로깅
-                                data_info = None
-                                if isinstance(data_value, dict):
-                                    data_info = f"딕셔너리 ({len(data_value)} 항목)"
-                                elif isinstance(data_value, list):
-                                    data_info = f"리스트 ({len(data_value)} 항목)"
-                                elif isinstance(data_value, str):
-                                    data_info = f"문자열 ({len(data_value)} 문자)"
-                                else:
-                                    data_info = f"{type(data_value).__name__}"
-                                    
-                                logger.info(f"[{task_uid}] 의존성 데이터 추출: 출처={source_role}, 키={data_key}, 유형={data_info}")
+                    # previous_results를 context에 추가
+                    if not task_has_context:
+                        context = {}
+                        task_has_context = True
+                    
+                    # context에 previous_results 추가
+                    context["previous_results"] = previous_results
+                    
+                    # writer 역할인 경우 특별 처리
+                    if role == "writer" and "references" in params:
+                        # 이전 결과의 formatted_result 값을 수집
+                        collected_info = []
+                        for prev_result in previous_results:
+                            if "result" in prev_result and isinstance(prev_result["result"], dict):
+                                result_data = prev_result["result"]
+                                if "formatted_result" in result_data and result_data["formatted_result"]:
+                                    collected_info.append(result_data["formatted_result"])
+                                elif "content" in result_data and result_data["content"]:
+                                    collected_info.append(result_data["content"])
                         
-                        # params에 데이터 통합 적용 (기존 데이터 유지하면서 새 데이터 추가)
-                        for source_role, data_dict in processed_data.items():
-                            # 현재 실행 중인 태스크의 params 업데이트
-                            task_params = task.get("params", {})
-                            
-                            # 의존성 출처 정보 추가 (디버깅 및 추적용)
-                            if "source_tasks" not in task_params:
-                                task_params["source_tasks"] = {}
-                            
-                            # 소스 에이전트별 데이터 처리
-                            for data_key, data_value in data_dict.items():
-                                # params에 직접 추가 (기존 키와 충돌하지 않는 경우)
-                                if data_key not in task_params:
-                                    task_params[data_key] = data_value
-                                    logger.info(f"[{task_uid}] params에 새 키 추가: {data_key}")
-                                else:
-                                    # 이미 존재하는 키에 대한 처리
-                                    if not task_params[data_key]:  # 빈 값 또는 None인 경우
-                                        task_params[data_key] = data_value
-                                        logger.info(f"[{task_uid}] params의 빈 값 업데이트: {data_key}")
-                                    else:
-                                        # 중복 키에 대해 소스 정보가 있는 중첩된 구조로 저장
-                                        task_params["source_tasks"][source_role] = task_params.get("source_tasks", {}).get(source_role, {})
-                                        task_params["source_tasks"][source_role][data_key] = data_value
-                                        logger.info(f"[{task_uid}] source_tasks에 중복 키 저장: {source_role}.{data_key}")
-                            
-                            # 업데이트된 params 저장
-                            task["params"] = task_params
-                            
-                        logger.info(f"[{task_uid}] 의존성 데이터가 params에 통합되었습니다.")
+                        # 참조 정보를 설정
+                        if collected_info:
+                            params["collected_info"] = "\n\n".join(collected_info)
+                            logger.info(f"[{task_uid}] writer 역할에 {len(collected_info)}개의 참조 정보 추가")
             
             # 컨텍스트 구성 여부 로깅
             logger.info(f"[{task_uid}] 컨텍스트 구성 완료: {task_has_context}")
@@ -577,14 +558,6 @@ class ResultCollector:
             if 'agent_configs' in create_params_copy:
                 create_params_copy.pop('agent_configs')
                 
-            # 직접 태스크에 의존성 결과가 있는 경우 전달
-            if "depends_results" in task and task["depends_results"]:
-                if not create_params_copy.get("context"):
-                    create_params_copy["context"] = {}
-                if not create_params_copy["context"].get("depends_results"):
-                    create_params_copy["context"]["depends_results"] = task["depends_results"]
-                logger.info(f"[{task_uid}] 의존성 결과를 create_params의 context에 추가했습니다. 개수: {len(task['depends_results'])}")
-                
             task_id = await self.broker_client.create_task(role, final_params, **create_params_copy)
             broker_task_id = task_id
             
@@ -612,9 +585,31 @@ class ResultCollector:
             # 태스크 설명 추가
             task_result["description"] = description
             
+            # 태스크 ID 설정 (특히 writer 태스크는 task_id를 반환하지 않는 경우가 있음)
+            if "task_id" not in task_result or not task_result["task_id"]:
+                task_result["task_id"] = task_id
+                logger.info(f"[{task_uid}] 태스크 ID 수동 설정: {task_id}")
+                
+            # writer 역할의 결과를 표준 형식으로 변환
+            if role == "writer" and task_status == "completed":
+                if "result" in task_result:
+                    if isinstance(task_result["result"], dict):
+                        # 이미 딕셔너리 형태인 경우는 content 키 확인
+                        if "content" not in task_result["result"]:
+                            # content 키가 없으면 다른 키 확인
+                            for key in ["value", "text", "message", "response"]:
+                                if key in task_result["result"] and task_result["result"][key]:
+                                    task_result["result"]["content"] = task_result["result"][key]
+                                    logger.info(f"[{task_uid}] writer 역할 결과를 content 키로 이동: {key} -> content")
+                                    break
+                    elif isinstance(task_result["result"], str):
+                        # 문자열인 경우 딕셔너리로 변환
+                        task_result["result"] = {"content": task_result["result"]}
+                        logger.info(f"[{task_uid}] writer 역할 문자열 결과를 content 키로 변환")
+            
             # 결과 분석 로깅
             if "result" in task_result:
-                result_keys = task_result["result"].keys() if isinstance(task_result["result"], dict) else []
+                result_keys = list(task_result["result"].keys()) if isinstance(task_result["result"], dict) else []
                 logger.info(f"[{task_uid}] 결과 내부 키: {result_keys}")
             
             # 태스크 결과 저장

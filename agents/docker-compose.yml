@@ -16,6 +16,8 @@ services:
             - PORT=8000
             - LOG_LEVEL=DEBUG
             - PYTHONPATH=/app
+            - GOOGLE_SEARCH_API_KEY=${GOOGLE_SEARCH_API_KEY}
+            - GOOGLE_SEARCH_CX=${GOOGLE_SEARCH_CX}
         volumes:
             - ../common:/app/common
             - ./web_search:/app/agent

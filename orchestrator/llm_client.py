@@ -114,7 +114,7 @@ class OrchestratorLLMClient:
             try:
                 # 응답 문자열에서 JSON 부분만 추출 시도 (마크다운 코드 블록 등 제거)
                 import re
-                json_match = re.search(r'```json\\s*([\\s\\S]*?)\\s*```', response_content)
+                json_match = re.search(r'```json\s*([\s\S]*?)\s*```', response_content)
                 if json_match:
                     json_str = json_match.group(1).strip()
                     logger.info("마크다운 코드 블록에서 JSON 추출 완료")
@@ -127,6 +127,22 @@ class OrchestratorLLMClient:
                 
                 decomposition = json.loads(json_str)
                 logger.info("LLM 응답 JSON 파싱 성공")
+                
+                # Claude 형식 응답 처리 (value 키로 감싸진 경우)
+                if "value" in decomposition and isinstance(decomposition["value"], dict):
+                    logger.info("Claude 형식 응답 감지: value 키에 데이터 존재")
+                    decomposition = decomposition["value"]
+                
+                # Claude 형식 응답 처리 (additionalProperties 키로 감싸진 경우)
+                if "additionalProperties" in decomposition and isinstance(decomposition["additionalProperties"], dict):
+                    logger.info("Claude 형식 응답 감지: additionalProperties 키에 데이터 존재")
+                    decomposition = decomposition["additionalProperties"]
+                
+                # 유효한 tasks 필드가 없는 경우 처리
+                if "tasks" not in decomposition or not decomposition["tasks"]:
+                    logger.warning("응답에 유효한 tasks 필드가 없습니다. 기본 구조로 변환합니다.")
+                    decomposition = {"tasks": [], "reasoning": "태스크를 찾을 수 없습니다."}
+                
                 return decomposition
                 
             except json.JSONDecodeError as e:

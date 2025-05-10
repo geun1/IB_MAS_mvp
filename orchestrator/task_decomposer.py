@@ -121,8 +121,23 @@ class TaskDecomposer:
             conversation_context=conversation_context
         )
 
+        # Claude 응답 형식 처리 (value 키로 감싸진 경우)
+        if "value" in decomposition_result and isinstance(decomposition_result["value"], dict):
+            logger.info("Claude 형식의 응답 감지: value 키 추출")
+            decomposition_result = decomposition_result["value"]
+            
+        # additionalProperties 필드가 있는 경우 처리
+        if "additionalProperties" in decomposition_result and isinstance(decomposition_result["additionalProperties"], dict):
+            logger.info("Claude 형식의 응답 감지: additionalProperties 키 추출")
+            decomposition_result = decomposition_result["additionalProperties"]
+
         # 태스크 목록 추출
         tasks_from_llm = decomposition_result.get("tasks", [])
+        
+        # 태스크 목록 유효성 검사
+        if not tasks_from_llm or not isinstance(tasks_from_llm, list):
+            logger.warning("LLM이 유효한 태스크 목록을 생성하지 않았습니다.")
+            return [], [], []
         
         # LLM이 생성한 태스크 중 비활성화된 역할을 사용하는 태스크 필터링 및 인덱스 재구성
         valid_tasks = []
@@ -166,7 +181,7 @@ class TaskDecomposer:
 또는 쿼리에서 주식 정보가 충분하지 않다면, 빈 객체 {{}}를 반환하고 그 이유를 설명해 주세요.
 응답은 유효한 JSON 형태로만 제공해 주세요.
 """
-                            response = await self.llm_client.ask(prompt)
+                            response = await self.llm_client.aask(prompt)
                             try:
                                 import re
                                 json_match = re.search(r'```json\s*([\s\S]*?)\s*```', response)

@@ -167,157 +167,72 @@ async def process_query(request: QueryRequest):
         # 이전 대화 컨텍스트 가져오기
         conversation_messages = await app.state.context_manager.get_conversation_messages(conversation_id)
         
-        tasks, execution_levels, natural_language_tasks = await task_decomposer.decompose_query(
-            query=request.query,
-            conversation_id=conversation_id,
-            user_id=user_id,
-            disabled_agents=request.disabled_agents,
-            conversation_context=conversation_messages
-        )
+        # 태스크 분해 결과 조회 및 저장
+        logger.info(f"메시지 ID {message_id}로 태스크 분해 결과 조회 시도")
         
-        # 태스크 저장
-        conversation.tasks = tasks
-        
-        # 자연어 태스크 설명 저장 (JSON 형태로)
-        conversation.task_descriptions = natural_language_tasks
-        
-        # 태스크 분해 결과를 즉시 Redis에 저장
+        # 태스크 분해 결과 추출
         try:
-            decomposition_data = {
-                "conversation_id": conversation_id,
-                "message_id": message_id,  # 메시지 ID 명시적 추가
-                "query": request.query,
-                "status": "decomposing",
-                "task_descriptions": natural_language_tasks,
-                "execution_levels": execution_levels,
-                "created_at": conversation.start_time,
-                "updated_at": time.time()
-            }
-            await app.state.context_manager.save_response(conversation_id, decomposition_data)
+            decomposition_data = await task_decomposer.decompose_query(
+                request.query,
+                conversation_id,
+                user_id,
+                request.disabled_agents,
+                conversation_messages
+            )
             
-            # 메시지에도 태스크 분해 결과 저장 (이 부분이 중요)
-            message = await app.state.context_manager.get_message(message_id)
-            if message:
-                # 메시지의 대화 ID 검증
-                if message.get("conversation_id") != conversation_id:
-                    logger.error(f"메시지 ID {message_id}의 대화 ID({message.get('conversation_id')})가 요청 대화 ID({conversation_id})와 일치하지 않습니다.")
-                    return {"error": "메시지와 대화 ID 불일치", "status": "error"}
-                
-                message["task_descriptions"] = natural_language_tasks
-                message["execution_levels"] = execution_levels
-                message["status"] = "processing"
-                message["updated_at"] = time.time()
-                
-                # 메시지 업데이트
-                msg_key = f"message:{message_id}"
-                app.state.context_manager.redis.set(msg_key, json.dumps(message))
-                app.state.context_manager.redis.expire(msg_key, app.state.context_manager.ttl)
-                
-                logger.info(f"메시지 ID {message_id}에 태스크 분해 결과를 저장했습니다.")
-            else:
-                logger.warning(f"태스크 분해 결과를 저장할 메시지 {message_id}를 찾을 수 없습니다.")
+            # 결과 수집기 초기화 (오류 발생 방지를 위해 여기서 미리 초기화)
+            result_collector = ResultCollector(app.state.broker_client, app.state.llm_client)
+            result_collector.current_conversation_id = conversation_id  # 대화 ID 설정
             
-            logger.info(f"대화 ID {conversation_id}의 태스크 분해 결과를 Redis에 저장했습니다.")
-        except Exception as e:
-            logger.error(f"태스크 분해 결과 저장 중 오류: {str(e)}")
-        
-        # 결과 수집
-        result_collector = ResultCollector(app.state.broker_client, app.state.llm_client)
-        result_collector.current_conversation_id = conversation_id  # 대화 ID 설정
-        
-        # 태스크 간 의존성 추적을 위한 변수
-        completed_task_ids = {}  # 역할별 완료된 태스크 ID 저장
-        
-        # 각 실행 레벨별로 태스크 처리
-        final_results = []
-        for level, level_task_indices in enumerate(execution_levels, 1):
-            logger.info(f"실행 레벨 {level} 처리 중 ({len(level_task_indices)}개 태스크)")
-            level_results = []
-
-            for task_idx in level_task_indices:
-                task = tasks[task_idx]  # 태스크 인덱스로 실제 태스크 객체 가져오기
-                role = task.get("role")
-                description = task.get("description")
+            if decomposition_data and len(decomposition_data) == 3 and decomposition_data[0]:
+                logger.info(f"태스크 분해 성공: {len(decomposition_data[0])}개 태스크 생성")
                 
-                # 비활성화된 에이전트에 대한 태스크인 경우 건너뛰기
-                if request.disabled_agents and role in request.disabled_agents:
-                    logger.warning(f"비활성화된 에이전트 '{role}'에 대한 태스크를 건너뜁니다: '{description}'")
-                    # skipped 상태로 결과 추가하고 다음 태스크로 넘어감
-                    level_results.append({
-                        "task_id": f"task_skipped_{task_idx}",
-                        "role": role,
-                        "status": "skipped",
-                        "error": f"해당 에이전트는 비활성화 상태입니다.",
-                        "description": description,
-                        "created_at": time.time(),
-                        "updated_at": time.time()
-                    })
-                    continue # 다음 task_idx로 이동
-                
-                # 여기부터는 활성화된 에이전트의 태스크만 처리
-                logger.info(f"태스크 실행: '{description}' (역할: {role})")
-                
-                # 태스크에 대화 ID 추가
-                task["conversation_id"] = conversation_id
-                
-                # 의존성 태스크 결과 추가 (이전 레벨 결과 주입)
-                if level > 1:
-                    # 이전 레벨의 완료된 결과만 필터링 (skipped 제외)
-                    prev_results = [res for res in result_collector.get_all_results() if res.get("status") == "completed"]
+                # 태스크 응답 형식 디버깅 - 첫 번째 태스크 구조 분석
+                if decomposition_data[0] and len(decomposition_data[0]) > 0:
+                    first_task = decomposition_data[0][0]
+                    task_keys = list(first_task.keys())
+                    logger.info(f"첫 번째 태스크 구조: 키={task_keys}")
                     
-                    if prev_results:
-                        logger.info(f"이전 레벨의 완료된 태스크 결과 {len(prev_results)}개를 현재 태스크에 전달")
-                        logger.debug(f"이전 결과 상세: {prev_results}")
-                        
-                        # 태스크에 의존성 정보 추가
-                        # 현재 태스크가 의존하는 이전 태스크의 ID 목록 생성 (구현 필요시)
-                        # task["depends_on"] = [prev_res["task_id"] for prev_res in prev_results if ... ]
-                        
-                        # 결과를 params에 병합 (예시: context 필드)
-                        if "params" not in task:
-                            task["params"] = {}
-                        task["params"]["previous_results"] = prev_results # 이전 결과를 params에 추가
-
+                    # role과 params 확인
+                    if "role" in first_task:
+                        logger.info(f"첫 번째 태스크 role: {first_task['role']}")
+                    if "params" in first_task and isinstance(first_task["params"], dict):
+                        logger.info(f"첫 번째 태스크 params 키: {list(first_task['params'].keys())}")
+                else:
+                    logger.warning("태스크 분해 결과가 없거나 형식이 올바르지 않습니다")
                 
-                # UI에서 전달된 에이전트 설정이 있는지 확인 및 적용
-                # request.agent_configs는 전체 설정일 수 있으므로, 현재 태스크 역할에 맞는 설정만 필터링 필요
-                agent_specific_config = None
-                if request.agent_configs and role in request.agent_configs:
-                    agent_specific_config = request.agent_configs[role]
-                    if agent_specific_config:
-                        # 태스크 파라미터에 에이전트 설정 병합 (기존 값 덮어쓰기 가능)
-                        if "params" not in task:
-                             task["params"] = {}
-                        task["params"].update(agent_specific_config) 
-                        logger.info(f"에이전트 '{role}' 설정 포함: {agent_specific_config}")
+                tasks, execution_levels, task_descriptions = decomposition_data
                 
-                # 태스크 실행 및 결과 수집
-                result = await result_collector.process_task(task)
-                level_results.append(result)
+                # 태스크 저장
+                conversation.tasks = tasks
                 
-                # 태스크 결과 및 상태 로깅
-                status = result.get("status", "unknown")
-                logger.info(f"태스크 '{description}' 완료: {status}")
+                # 자연어 태스크 설명 저장 (JSON 형태로)
+                conversation.task_descriptions = task_descriptions
                 
-                # 각 태스크 결과 즉시 DB에 저장
+                # 태스크 분해 결과를 즉시 Redis에 저장
                 try:
-                    # 현재까지의 태스크 결과만 포함하는 임시 데이터 구성
-                    current_tasks_data = {
+                    decomposition_data = {
                         "conversation_id": conversation_id,
-                        "message_id": message_id,  # 메시지 ID 추가
-                        "status": "processing",
-                        "tasks": final_results + level_results,  # 이전 레벨 + 현재 레벨 결과 누적
+                        "message_id": message_id,  # 메시지 ID 명시적 추가
+                        "query": request.query,
+                        "status": "decomposing",
+                        "task_descriptions": task_descriptions,
+                        "execution_levels": execution_levels,
                         "created_at": conversation.start_time,
                         "updated_at": time.time()
                     }
+                    await app.state.context_manager.save_response(conversation_id, decomposition_data)
                     
-                    # Redis에 태스크 결과 즉시 저장
-                    await app.state.context_manager.save_response(conversation_id, current_tasks_data)
-                    
-                    # 메시지에도 태스크 결과 저장
+                    # 메시지에도 태스크 분해 결과 저장 (이 부분이 중요)
                     message = await app.state.context_manager.get_message(message_id)
                     if message:
-                        message["tasks"] = final_results + level_results
+                        # 메시지의 대화 ID 검증
+                        if message.get("conversation_id") != conversation_id:
+                            logger.error(f"메시지 ID {message_id}의 대화 ID({message.get('conversation_id')})가 요청 대화 ID({conversation_id})와 일치하지 않습니다.")
+                            return {"error": "메시지와 대화 ID 불일치", "status": "error"}
+                        
+                        message["task_descriptions"] = task_descriptions
+                        message["execution_levels"] = execution_levels
                         message["status"] = "processing"
                         message["updated_at"] = time.time()
                         
@@ -325,77 +240,199 @@ async def process_query(request: QueryRequest):
                         msg_key = f"message:{message_id}"
                         app.state.context_manager.redis.set(msg_key, json.dumps(message))
                         app.state.context_manager.redis.expire(msg_key, app.state.context_manager.ttl)
+                        
+                        logger.info(f"메시지 ID {message_id}에 태스크 분해 결과를 저장했습니다.")
+                    else:
+                        logger.warning(f"태스크 분해 결과를 저장할 메시지 {message_id}를 찾을 수 없습니다.")
                     
-                    logger.info(f"대화 ID {conversation_id}, 메시지 ID {message_id}의 태스크 결과 업데이트됨: {role} - {status}")
+                    logger.info(f"대화 ID {conversation_id}의 태스크 분해 결과를 Redis에 저장했습니다.")
                 except Exception as e:
-                    logger.error(f"태스크 결과 저장 중 오류: {str(e)}")
-            
-            final_results.extend(level_results)
-            
-            # WebSocket으로 진행 상황 업데이트
-            progress_update = {
-                "type": "progress",
-                "level": level,
-                "total_levels": len(execution_levels),
-                "completed_tasks": len(final_results),
-                "total_tasks": len(tasks)
-            }
-            await app.state.websocket_manager.broadcast(conversation_id, progress_update)
-        
-        # 통합 결과 생성
-        final_response = await result_collector.integrate_results(
-            request.query, final_results, conversation_id
-        )
-        
-        # 대화 상태 업데이트
-        conversation.status = "completed"
-        conversation.end_time = time.time()
-        conversation.update_time = time.time()
-        conversation.completed_tasks = final_results
-        
-        logger.info(f"대화 처리 완료: {conversation_id}")
-        
-        # WebSocket으로 완료 상태 전송
-        completion_update = {
-            "type": "completion",
-            "conversation_id": conversation_id,
-            "message": final_response.get("message", ""),
-            "tasks_count": len(final_results)
-        }
-        await app.state.websocket_manager.broadcast(conversation_id, completion_update)
+                    logger.error(f"태스크 분해 결과 저장 중 오류: {str(e)}")
+                
+                # 결과 수집기 초기화
+                result_collector = ResultCollector(app.state.broker_client, app.state.llm_client)
+                result_collector.current_conversation_id = conversation_id  # 대화 ID 설정
+                
+                # 이전 태스크 결과를 저장할 변수
+                all_previous_results = []
+                
+                # 각 실행 레벨별로 태스크 처리
+                final_results = []
+                for level, level_task_indices in enumerate(execution_levels, 1):
+                    logger.info(f"실행 레벨 {level} 처리 중 ({len(level_task_indices)}개 태스크)")
+                    level_results = []
 
-        # 최종 대화 상태를 Redis에 저장
-        try:
-            # 저장할 최종 응답 데이터 구성
-            final_data = {
-                "conversation_id": conversation_id,
-                "message_id": message_id,
-                "query": request.query,
-                "status": "completed",
-                "tasks": final_results,
-                "message": final_response.get("message", ""),
-                "created_at": conversation.start_time,
-                "updated_at": time.time(),
-                "task_descriptions": natural_language_tasks,  # 자연어 태스크 설명 추가
-                "execution_levels": execution_levels  # 실행 레벨 정보 추가
-            }
-            
-            # 메시지 업데이트
-            await app.state.context_manager.update_message(message_id, final_data)
-            
-            # Redis에 저장 (기존 호환성 유지)
-            await app.state.context_manager.save_response(conversation_id, final_data)
-            logger.info(f"대화 ID {conversation_id}, 메시지 ID {message_id}의 최종 상태를 Redis에 저장했습니다.")
+                    for task_idx in level_task_indices:
+                        task = tasks[task_idx]  # 태스크 인덱스로 실제 태스크 객체 가져오기
+                        role = task.get("role")
+                        description = task.get("description")
+                        
+                        # 비활성화된 에이전트에 대한 태스크인 경우 건너뛰기
+                        if request.disabled_agents and role in request.disabled_agents:
+                            logger.warning(f"비활성화된 에이전트 '{role}'에 대한 태스크를 건너뜁니다: '{description}'")
+                            # skipped 상태로 결과 추가하고 다음 태스크로 넘어감
+                            level_results.append({
+                                "task_id": f"task_skipped_{task_idx}",
+                                "role": role,
+                                "status": "skipped",
+                                "error": f"해당 에이전트는 비활성화 상태입니다.",
+                                "description": description,
+                                "created_at": time.time(),
+                                "updated_at": time.time()
+                            })
+                            continue # 다음 task_idx로 이동
+                        
+                        # 여기부터는 활성화된 에이전트의 태스크만 처리
+                        logger.info(f"태스크 실행: '{description}' (역할: {role})")
+                        
+                        # 태스크에 대화 ID 추가
+                        task["conversation_id"] = conversation_id
+                        
+                        # 이전 레벨의 모든 완료된 결과 추가
+                        if all_previous_results:
+                            # params가 없으면 초기화
+                            if "params" not in task:
+                                task["params"] = {}
+                            task["params"]["previous_results"] = all_previous_results
+                            logger.info(f"태스크 '{description}'에 {len(all_previous_results)}개의 이전 결과를 전달합니다")
+                        
+                        # UI에서 전달된 에이전트 설정이 있는지 확인 및 적용
+                        agent_specific_config = None
+                        if request.agent_configs and role in request.agent_configs:
+                            agent_specific_config = request.agent_configs[role]
+                            if agent_specific_config:
+                                # 태스크 파라미터에 에이전트 설정 병합 (기존 값 덮어쓰기 가능)
+                                if "params" not in task:
+                                    task["params"] = {}
+                                task["params"].update(agent_specific_config) 
+                                logger.info(f"에이전트 '{role}' 설정 포함: {agent_specific_config}")
+                        
+                        # 태스크 실행 및 결과 수집
+                        result = await result_collector.process_task(task)
+                        level_results.append(result)
+                        
+                        # 태스크 결과 및 상태 로깅
+                        status = result.get("status", "unknown")
+                        logger.info(f"태스크 '{description}' 완료: {status}")
+                        
+                        # 각 태스크 결과 즉시 DB에 저장
+                        try:
+                            # 현재까지의 태스크 결과만 포함하는 임시 데이터 구성
+                            current_tasks_data = {
+                                "conversation_id": conversation_id,
+                                "message_id": message_id,  # 메시지 ID 추가
+                                "status": "processing",
+                                "tasks": final_results + level_results,  # 이전 레벨 + 현재 레벨 결과 누적
+                                "created_at": conversation.start_time,
+                                "updated_at": time.time()
+                            }
+                            
+                            # Redis에 태스크 결과 즉시 저장
+                            await app.state.context_manager.save_response(conversation_id, current_tasks_data)
+                            
+                            # 메시지에도 태스크 결과 저장
+                            message = await app.state.context_manager.get_message(message_id)
+                            if message:
+                                message["tasks"] = final_results + level_results
+                                message["status"] = "processing"
+                                message["updated_at"] = time.time()
+                                
+                                # 메시지 업데이트
+                                msg_key = f"message:{message_id}"
+                                app.state.context_manager.redis.set(msg_key, json.dumps(message))
+                                app.state.context_manager.redis.expire(msg_key, app.state.context_manager.ttl)
+                            
+                            logger.info(f"대화 ID {conversation_id}, 메시지 ID {message_id}의 태스크 결과 업데이트됨: {role} - {status}")
+                        except Exception as e:
+                            logger.error(f"태스크 결과 저장 중 오류: {str(e)}")
+                    
+                    # 이번 레벨의 완료된 태스크 결과를 다음 레벨을 위해 저장
+                    completed_results = [res for res in level_results if res.get("status") == "completed"]
+                    all_previous_results.extend(completed_results)
+                    logger.info(f"레벨 {level} 완료: {len(completed_results)}개 태스크 성공, 총 {len(all_previous_results)}개 결과 누적")
+                    
+                    # 최종 결과에 현재 레벨 결과 추가
+                    final_results.extend(level_results)
+                    
+                    # WebSocket으로 진행 상황 업데이트
+                    progress_update = {
+                        "type": "progress",
+                        "level": level,
+                        "total_levels": len(execution_levels),
+                        "completed_tasks": len(final_results),
+                        "total_tasks": len(tasks)
+                    }
+                    await app.state.websocket_manager.broadcast(conversation_id, progress_update)
+                
+                # 통합 결과 생성
+                final_response = await result_collector.integrate_results(
+                    request.query, final_results, conversation_id
+                )
+                
+                # 대화 상태 업데이트
+                conversation.status = "completed"
+                conversation.end_time = time.time()
+                conversation.update_time = time.time()
+                conversation.completed_tasks = final_results
+                
+                logger.info(f"대화 처리 완료: {conversation_id}")
+                
+                # WebSocket으로 완료 상태 전송
+                completion_update = {
+                    "type": "completion",
+                    "conversation_id": conversation_id,
+                    "message": final_response.get("message", ""),
+                    "tasks_count": len(final_results)
+                }
+                await app.state.websocket_manager.broadcast(conversation_id, completion_update)
+
+                # 최종 대화 상태를 Redis에 저장
+                try:
+                    # 저장할 최종 응답 데이터 구성
+                    final_data = {
+                        "conversation_id": conversation_id,
+                        "message_id": message_id,
+                        "query": request.query,
+                        "status": "completed",
+                        "tasks": final_results,
+                        "message": final_response.get("message", ""),
+                        "created_at": conversation.start_time,
+                        "updated_at": time.time(),
+                        "task_descriptions": task_descriptions,  # 자연어 태스크 설명 추가
+                        "execution_levels": execution_levels  # 실행 레벨 정보 추가
+                    }
+                    
+                    # 메시지 업데이트
+                    await app.state.context_manager.update_message(message_id, final_data)
+                    
+                    # Redis에 저장 (기존 호환성 유지)
+                    await app.state.context_manager.save_response(conversation_id, final_data)
+                    logger.info(f"대화 ID {conversation_id}, 메시지 ID {message_id}의 최종 상태를 Redis에 저장했습니다.")
+                except Exception as e:
+                    logger.error(f"대화 상태 저장 중 오류: {str(e)}")
+                
+                # 최종 응답 반환
+                return {
+                    "conversation_id": conversation_id,
+                    "message_id": message_id,
+                    "status": "success",
+                    "message": "대화가 성공적으로 처리되었습니다."
+                }
+
         except Exception as e:
-            logger.error(f"대화 상태 저장 중 오류: {str(e)}")
-            
-        # 최종 응답 반환
-        return {
-            "conversation_id": conversation_id,
-            "message_id": message_id,
-            "status": "success",
-            "message": "대화가 성공적으로 처리되었습니다."
-        }
+            logger.exception(f"쿼리 처리 중 오류: {str(e)}")
+            # 오류 발생 시에도 상태 업데이트 시도 (선택 사항)
+            if 'conversation_id' in locals() and conversation_id in app.state.conversations:
+                 app.state.conversations[conversation_id].status = "failed"
+                 app.state.conversations[conversation_id].update_time = time.time()
+                 # 실패 상태도 저장할 수 있음 (필요시)
+                 # await app.state.context_manager.save_response(conversation_id, {"status": "failed", "error": str(e)})
+
+            # HTTP 응답 반환
+            raise HTTPException(
+                status_code=500,
+                detail=f"쿼리 처리 중 오류 발생: {str(e)}"
+            )
 
     except Exception as e:
         logger.exception(f"쿼리 처리 중 오류: {str(e)}")
