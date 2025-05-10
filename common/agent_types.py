@@ -14,6 +14,7 @@ class AgentType(str, Enum):
     SUMMARIZER = "summarizer"
     TRANSLATOR = "translator"
     IMAGE_GENERATOR = "image_generator"
+    TRAVEL_PLANNER = "travel_planner"
     CUSTOM = "custom"
 
 class AgentStatus(str, Enum):
@@ -35,6 +36,7 @@ AGENT_DESCRIPTIONS = {
     AgentType.SUMMARIZER: "긴 문서나 텍스트를 요약합니다.",
     AgentType.TRANSLATOR: "텍스트를 다른 언어로 번역합니다.",
     AgentType.IMAGE_GENERATOR: "텍스트 설명을 기반으로 이미지를 생성합니다.",
+    AgentType.TRAVEL_PLANNER: "사용자 요구사항에 맞는 여행 계획을 세우고 추천합니다.",
     AgentType.CUSTOM: "사용자 정의 기능을 수행합니다."
 }
 
@@ -75,6 +77,27 @@ AGENT_DEFAULT_PARAMS = {
             "required": False,
             "type": "string",
             "default": "python" 
+        }
+    ],
+    AgentType.TRAVEL_PLANNER: [
+        {
+            "name": "query",
+            "description": "여행 계획에 대한 요구사항",
+            "required": True,
+            "type": "string"
+        },
+        {
+            "name": "context",
+            "description": "추가 컨텍스트 정보",
+            "required": False,
+            "type": "string"
+        },
+        {
+            "name": "max_steps",
+            "description": "최대 ReACT 단계 수",
+            "required": False,
+            "type": "integer",
+            "default": 10
         }
     ]
     # 다른 에이전트 타입에 대한 파라미터도 추가 가능

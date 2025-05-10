@@ -135,6 +135,94 @@ const extractMessage = (data: any): string => {
 
     console.log("응답 데이터 분석:", data); // 디버깅용 로깅
 
+    // 여행 계획 에이전트의 ReAct 단계 정보가 있는 경우 특별히 처리
+    if (data.steps_count && data.travel_plan) {
+        console.log("여행 계획 에이전트 ReAct 결과 감지");
+
+        // 상세 단계 정보가 있는 경우 포맷팅
+        let stepDetailsHtml = "";
+        if (data.step_details && Array.isArray(data.step_details)) {
+            stepDetailsHtml = "\n\n## ReAct 에이전트 처리 과정\n\n";
+
+            // 단계별로 구분하여 표시
+            data.step_details.forEach((step: any, index: number) => {
+                const stepNum = index + 1;
+                const stepType =
+                    step.type === "reasoning"
+                        ? "🧠 추론"
+                        : step.type === "action"
+                        ? "🛠️ 행동"
+                        : step.type === "observation"
+                        ? "👁️ 관찰"
+                        : "⚠️ 오류";
+
+                stepDetailsHtml += `### 단계 ${stepNum}: ${stepType}\n`;
+
+                // 내용이 JSON 형태로 저장된 경우 파싱 시도
+                let content = step.content;
+                try {
+                    if (
+                        typeof content === "string" &&
+                        content.startsWith("{")
+                    ) {
+                        const parsed = JSON.parse(content);
+
+                        if (step.type === "reasoning") {
+                            stepDetailsHtml += `**사고 과정**: ${
+                                parsed.thought || ""
+                            }\n\n`;
+                            stepDetailsHtml += `**다음 행동**: ${
+                                parsed.next_action || ""
+                            }\n\n`;
+                            if (parsed.params) {
+                                stepDetailsHtml += `**파라미터**: \`\`\`json\n${JSON.stringify(
+                                    parsed.params,
+                                    null,
+                                    2
+                                )}\n\`\`\`\n\n`;
+                            }
+                            stepDetailsHtml += `**이유**: ${
+                                parsed.reason || ""
+                            }\n\n`;
+                        } else {
+                            // 다른 형태의 내용은 그대로 출력
+                            stepDetailsHtml += `\`\`\`json\n${JSON.stringify(
+                                parsed,
+                                null,
+                                2
+                            )}\n\`\`\`\n\n`;
+                        }
+                    } else {
+                        stepDetailsHtml += `${content}\n\n`;
+                    }
+                } catch (e) {
+                    // 파싱 실패 시 원본 내용 그대로 표시
+                    stepDetailsHtml += `${content}\n\n`;
+                }
+            });
+        }
+
+        // 여행 계획과 ReAct 단계 정보를 함께 반환
+        return `
+## 📝 최종 여행 계획
+
+${data.travel_plan}
+
+---
+
+### 📊 ReAct 에이전트 처리 정보
+* 총 단계 수: ${data.steps_count}회
+* 추론-행동-관찰 루프 수행 완료
+
+<details>
+<summary>📋 상세 처리 과정 보기</summary>
+
+${stepDetailsHtml}
+</details>
+`;
+    }
+
+    // 이전의 기존 로직 계속
     // 결과가 이미 문자열인 경우
     if (typeof data === "string") {
         console.log("결과가 직접 문자열");
@@ -1039,7 +1127,7 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
         });
     };
 
-    // 개별 태스크 결과 업데이트 함수
+    // 태스크 결과 업데이트 함수
     const updateTaskResult = (task: TaskItem) => {
         if (!task) {
             console.error("[태스크 결과] 유효하지 않은 태스크:", task);
@@ -1090,24 +1178,158 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
             const messageIdForProps =
                 task.message_id || currentMessageId || undefined;
 
-            // 태스크 결과 요소 생성 (원래 형식으로 복원)
-            const taskElement = (
-                <ProcessMessage
-                    key={`task-${taskId}-${currentMessageId || "default"}`}
-                    type="agent_result"
-                    role={task.role}
-                    content={resultContent}
-                    timestamp={
-                        task.completed_at
-                            ? new Date(task.completed_at * 1000)
-                            : new Date()
+            // 처리 단계 타입 정의 추가
+            interface ReactStep {
+                type: string;
+                content: string;
+                timestamp?: number;
+            }
+
+            // Travel Planner 에이전트 결과 특별 처리 (ReAct 에이전트)
+            let taskElement;
+            if (
+                task.role === "travel_planner" &&
+                task.result &&
+                task.result.steps_count
+            ) {
+                // ReAct 에이전트로 처리
+                console.log(
+                    "[ReAct 에이전트] 여행 계획 에이전트 결과 처리:",
+                    task.result
+                );
+
+                // steps_count를 사용해 ReAct 단계 정보 구성
+                const stepsCount = task.result.steps_count || 0;
+
+                // 각 단계의 비율을 계산 (실제 ReAct 구현의 단계별 비율에 맞게 조정)
+                const reasoningSteps = Math.floor(stepsCount / 3);
+                const actionSteps = Math.floor(stepsCount / 3);
+                const observationSteps =
+                    stepsCount - reasoningSteps - actionSteps;
+
+                // 결과 콘텐츠에서 여행 계획만 추출
+                let travelPlanContent =
+                    task.result.travel_plan || resultContent;
+
+                // 단계별 내용이 있으면 추가
+                if (
+                    task.result.step_details &&
+                    Array.isArray(task.result.step_details)
+                ) {
+                    // 단계별 요약 정보 추가
+                    travelPlanContent +=
+                        "\n\n## 📊 ReAct 에이전트 처리 과정 요약\n\n";
+                    travelPlanContent += `총 단계 수: ${stepsCount}회\n`;
+                    travelPlanContent += `추론 단계: ${reasoningSteps}회 | 행동 단계: ${actionSteps}회 | 관찰 단계: ${observationSteps}회\n\n`;
+
+                    // 다른 에이전트 호출 정보 확인 및 추가
+                    const actionStepsList = task.result.step_details.filter(
+                        (step: ReactStep) => step.type === "action"
+                    );
+
+                    const agentCalls = new Set<string>();
+                    actionStepsList.forEach((step: ReactStep) => {
+                        if (step.content && typeof step.content === "string") {
+                            // 행동 단계에서 에이전트 호출 정보 추출 시도
+                            if (
+                                step.content.includes("web_search") ||
+                                step.content.includes("writer") ||
+                                step.content.includes("data_analyzer")
+                            ) {
+                                // 간단한 정규식으로 에이전트 이름 추출
+                                const matches =
+                                    step.content.match(/행동: ([a-z_]+)/i);
+                                if (matches && matches[1]) {
+                                    agentCalls.add(matches[1]);
+                                }
+                            }
+                        }
+                    });
+
+                    if (agentCalls.size > 0) {
+                        travelPlanContent += "### 🤝 협업한 에이전트\n";
+                        agentCalls.forEach((agent) => {
+                            travelPlanContent += `- ${agent}\n`;
+                        });
+                        travelPlanContent += "\n";
                     }
-                    taskDescription={task.description || `${task.role} 태스크`}
-                    taskIndex={task.index}
-                    status={task.status}
-                    messageId={messageIdForProps}
-                />
-            );
+
+                    // 세부 단계 표시는 접을 수 있는 형태로 변경
+                    travelPlanContent +=
+                        "<details>\n<summary>📋 세부 단계 진행 과정 보기</summary>\n\n";
+
+                    task.result.step_details.forEach(
+                        (step: ReactStep, idx: number) => {
+                            if (step.type === "reasoning") {
+                                travelPlanContent += `### 단계 ${
+                                    idx + 1
+                                } - 🧠 추론\n${step.content}\n\n`;
+                            } else if (step.type === "action") {
+                                travelPlanContent += `### 단계 ${
+                                    idx + 1
+                                } - 🛠️ 행동\n\`\`\`\n${
+                                    step.content
+                                }\n\`\`\`\n\n`;
+                            } else if (step.type === "observation") {
+                                travelPlanContent += `### 단계 ${
+                                    idx + 1
+                                } - 👁️ 관찰\n\`\`\`\n${
+                                    step.content
+                                }\n\`\`\`\n\n`;
+                            }
+                        }
+                    );
+
+                    travelPlanContent += "</details>\n";
+                }
+
+                taskElement = (
+                    <ProcessMessage
+                        key={`task-${taskId}-${currentMessageId || "default"}`}
+                        type="react_agent"
+                        role={task.role}
+                        content={travelPlanContent}
+                        timestamp={
+                            task.completed_at
+                                ? new Date(task.completed_at * 1000)
+                                : new Date()
+                        }
+                        taskDescription={`${
+                            task.description || "여행 계획"
+                        } (ReAct 패턴)`}
+                        taskIndex={task.index}
+                        status={task.status}
+                        messageId={messageIdForProps}
+                        stepInfo={{
+                            total: stepsCount,
+                            reasoning: reasoningSteps,
+                            action: actionSteps,
+                            observation: observationSteps,
+                        }}
+                    />
+                );
+            } else {
+                // 일반 에이전트 결과
+                taskElement = (
+                    <ProcessMessage
+                        key={`task-${taskId}-${currentMessageId || "default"}`}
+                        type="agent_result"
+                        role={task.role}
+                        content={resultContent}
+                        timestamp={
+                            task.completed_at
+                                ? new Date(task.completed_at * 1000)
+                                : new Date()
+                        }
+                        taskDescription={
+                            task.description || `${task.role} 태스크`
+                        }
+                        taskIndex={task.index}
+                        status={task.status}
+                        messageId={messageIdForProps}
+                    />
+                );
+            }
 
             // 같은 role을 가진 결과가 이미 있는지 확인
             const existingRoleIndex =
@@ -1263,109 +1485,33 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
             return;
         }
 
-        // 응답에서 메시지 ID 확인
-        if (
-            agentTasksData.message_id &&
-            (!currentMessageId ||
-                currentMessageId !== agentTasksData.message_id)
-        ) {
-            console.log(
-                `[에이전트 결과] 응답에서 메시지 ID 업데이트: ${agentTasksData.message_id}`
-            );
-            setCurrentMessageId(agentTasksData.message_id);
-        }
-
-        // 에러 응답 처리
-        if (agentTasksData.error) {
-            console.log(
-                `[에이전트 결과] 에러 응답: ${agentTasksData.error}, 폴링 계속`
-            );
-            return; // 폴링 계속
-        }
-
-        // 태스크가 없으면 계속 폴링
-        if (!agentTasksData.tasks || agentTasksData.tasks.length === 0) {
-            console.log(`[에이전트 결과] 태스크 없음, 폴링 계속`);
-            return; // 폴링 계속
-        }
-
-        // 완료된 태스크 확인
-        const completedTasks = agentTasksData.tasks.filter(
-            (task: any) => task.status === "completed"
-        );
-
-        console.log(
-            `[에이전트 결과] 태스크 진행 상황: ${completedTasks.length}/${agentTasksData.tasks.length} 완료`
-        );
-
-        // 예상되는 태스크 개수와 비교
-        console.log(
-            `[에이전트 결과] 완료된 태스크 수: ${completedTasks.length}, 예상 태스크 수: ${expectedAgentTasks}`
-        );
-
-        // 각 태스크 결과 처리 (UI 업데이트)
-        agentTasksData.tasks.forEach((task: any) => {
-            // 메시지 ID 일치 확인
-            if (
-                task.message_id &&
-                currentMessageId &&
-                task.message_id !== currentMessageId
-            ) {
-                console.log(
-                    `[태스크 결과] 다른 메시지의 태스크입니다. 현재: ${currentMessageId}, 태스크: ${task.message_id}. 무시합니다.`
-                );
-                return;
-            }
-
-            console.log(
-                `[태스크 결과] 태스크 확인: ID=${task.task_id || ""}, 상태=${
-                    task.status
-                }, 역할=${task.role || "알 수 없음"}`
+        // ReAct 에이전트 태스크 특별 처리 추가
+        const hasReActTasks =
+            agentTasksData.tasks &&
+            agentTasksData.tasks.some(
+                (task: any) =>
+                    task.role === "travel_planner" &&
+                    task.status === "completed"
             );
 
-            // 태스크 결과 업데이트 (UI 반영)
-            updateTaskResult(task);
-        });
-
-        // 새로운 완료된 태스크 추적
-        const newCompletedTaskIds = new Set(completedTaskIds);
-        completedTasks.forEach((task: any) => {
-            if (task.task_id && !completedTaskIds.has(task.task_id)) {
-                newCompletedTaskIds.add(task.task_id);
-            }
-        });
-
-        // 완료된 태스크가 변경된 경우 상태 업데이트
-        if (newCompletedTaskIds.size > completedTaskIds.size) {
-            setCompletedTaskIds(newCompletedTaskIds);
-        }
-
-        // 예상되는 태스크 개수와 완료된 태스크 개수를 비교
-        const receivedAllExpectedTasks =
-            expectedAgentTasks > 0 &&
-            completedTasks.length >= expectedAgentTasks;
-
-        // 모든 태스크가 완료되었는지 확인 (두 가지 조건 모두 만족해야 함)
-        // 1. 모든 태스크의 상태가 completed
-        // 2. 예상되는 태스크 개수만큼 태스크가 수신됨
-        const allCompleted =
+        // 모든 태스크 완료 여부 확인
+        const allTasksCompleted =
+            agentTasksData.tasks &&
+            Array.isArray(agentTasksData.tasks) &&
             agentTasksData.tasks.length > 0 &&
             agentTasksData.tasks.every(
                 (task: any) => task.status === "completed"
-            ) &&
-            receivedAllExpectedTasks;
-
-        // 모든 태스크가 완료되면 태스크 결과 폴링 중단
-        if (allCompleted) {
-            console.log(
-                `[시퀀스] 모든 태스크 완료 (${completedTasks.length}/${expectedAgentTasks}), 태스크 결과 폴링 중단`
             );
 
-            // 태스크 결과 폴링 중단
-            setPollingState((prev) => ({
-                ...prev,
-                taskResultPolling: false, // 태스크 결과 폴링 중단
-            }));
+        if (allTasksCompleted) {
+            console.log("[에이전트 결과] 모든 태스크 완료 감지");
+
+            // 태스크가 모두 완료된 경우 태스크 폴링 중지 및 최종 결과 폴링 시작
+            setPollingState({
+                decompositionPolling: false,
+                taskResultPolling: false, // 태스크 폴링 중단
+                finalResultPolling: true, // 최종 결과 폴링 시작
+            });
 
             // React Query 폴링 명시적 중단 - 쿼리 비활성화
             queryClient.setQueryData(
@@ -1378,24 +1524,85 @@ const RequestForm: React.FC<RequestFormProps> = ({ onTaskCreated }) => {
                 currentMessageId,
             ]);
 
-            // 잠시 대기 후 최종 결과 폴링으로 전환
-            const timeoutId = setTimeout(() => {
-                console.log(
-                    `[시퀀스] 최종 결과 폴링 시작: 메시지 ID=${
-                        currentMessageId || agentTasksData.message_id
-                    }`
-                );
-                setPollingState({
-                    decompositionPolling: false,
-                    taskResultPolling: false,
-                    finalResultPolling: true,
-                });
-            }, 2000);
-
-            return () => clearTimeout(timeoutId);
-        } else {
             console.log(
-                `[에이전트 결과] 아직 모든 태스크가 완료되지 않음 (${completedTasks.length}/${expectedAgentTasks}), 폴링 계속`
+                "[시퀀스] 모든 태스크 완료되어 최종 결과 폴링으로 전환"
+            );
+        }
+
+        if (hasReActTasks) {
+            console.log("[ReAct 에이전트] 태스크 감지");
+            // React 에이전트 태스크는 UI에 특별히 표시
+            agentTasksData.tasks.forEach((task: any) => {
+                if (task.role === "travel_planner") {
+                    // steps_count 정보 확인
+                    const stepsCount = task.result?.steps_count || 0;
+
+                    // 메시지에 ReAct 패턴 정보 추가
+                    if (
+                        task.result &&
+                        !task.result.react_info &&
+                        stepsCount > 0
+                    ) {
+                        task.result.react_info = `이 태스크는 ReAct(추론-행동-관찰) 패턴으로 처리되었으며 총 ${stepsCount}회의 단계를 거쳤습니다.`;
+                    }
+
+                    // 태스크 결과 업데이트 (UI 반영)
+                    updateTaskResult({
+                        ...task,
+                        description: `${
+                            task.description || "여행 계획 생성"
+                        } (ReAct 단계: ${stepsCount})`,
+                    });
+                } else {
+                    // 다른 에이전트의 태스크는 일반적으로 처리
+                    updateTaskResult(task);
+                }
+            });
+        } else {
+            // 일반 태스크 처리 (기존 코드)
+            if (agentTasksData.tasks) {
+                agentTasksData.tasks.forEach((task: any) => {
+                    updateTaskResult(task);
+
+                    // 태스크 ID 기록 (완료된 태스크 추적용)
+                    if (task.status === "completed") {
+                        setCompletedTaskIds(
+                            (prev) => new Set([...prev, task.id])
+                        );
+                    }
+                });
+            }
+        }
+
+        // 예상된 에이전트 태스크 개수와 완료된 태스크 개수 비교
+        if (
+            expectedAgentTasks > 0 &&
+            completedTaskIds.size >= expectedAgentTasks
+        ) {
+            console.log(
+                `[에이전트 결과] 모든 태스크 완료: ${completedTaskIds.size}/${expectedAgentTasks}`
+            );
+
+            // 모든 태스크가 완료된 경우 최종 결과 폴링 시작
+            setPollingState({
+                decompositionPolling: false,
+                taskResultPolling: false,
+                finalResultPolling: true,
+            });
+
+            // React Query 폴링 명시적 중단 - 쿼리 비활성화
+            queryClient.setQueryData(
+                ["agentTasks", conversationId, currentMessageId],
+                (oldData: any) => ({ ...oldData, _pollingDisabled: true })
+            );
+            queryClient.cancelQueries([
+                "agentTasks",
+                conversationId,
+                currentMessageId,
+            ]);
+
+            console.log(
+                "[시퀀스] 에이전트 태스크 모두 완료, 최종 결과 폴링 시작"
             );
         }
     }, [

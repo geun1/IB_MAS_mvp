@@ -30,7 +30,6 @@ services:
             ]
         restart: always
         networks:
-            - agent-network
             - multiagent-network
 
     writer_agent:
@@ -62,7 +61,6 @@ services:
             ]
         restart: always
         networks:
-            - agent-network
             - multiagent-network
 
     stock_data_agent:
@@ -95,7 +93,6 @@ services:
             ]
         restart: always
         networks:
-            - agent-network
             - multiagent-network
 
     code_generator_agent:
@@ -127,7 +124,6 @@ services:
             ]
         restart: always
         networks:
-            - agent-network
             - multiagent-network
 
     example_agent:
@@ -159,7 +155,6 @@ services:
             ]
         restart: always
         networks:
-            - agent-network
             - multiagent-network
 
     react_agent:
@@ -182,7 +177,6 @@ services:
             - OPENAI_API_KEY=${OPENAI_API_KEY}
             - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
         networks:
-            - agent-network
             - multiagent-network
         restart: always
 
@@ -203,8 +197,9 @@ services:
             - PORT=8040
             - PYTHONPATH=/app
             - LOG_LEVEL=INFO
+            - OPENAI_API_KEY=${OPENAI_API_KEY}
+            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
         networks:
-            - agent-network
             - multiagent-network
         restart: always
 
@@ -237,10 +232,32 @@ services:
             ]
         restart: always
         networks:
-            - agent-network
             - multiagent-network
 
+    travel_planner_agent:
+        build:
+            context: ../
+            dockerfile: ./agents/travel_planner/Dockerfile
+        container_name: travel_planner_agent
+        ports:
+            - "8050:8050"
+        volumes:
+            - ../common:/app/common:ro
+            - ../agents/travel_planner:/app/agent:ro
+        environment:
+            - REGISTRY_URL=http://registry:8000
+            - BROKER_URL=http://broker:8000
+            - CONTAINER_NAME=travel_planner_agent
+            - PORT=8050
+            - PYTHONPATH=/app
+            - LOG_LEVEL=DEBUG
+            - MAX_STEPS=15
+            - OPENAI_API_KEY=${OPENAI_API_KEY}
+            - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+        networks:
+            - multiagent-network
+        restart: always
+
 networks:
-    agent-network:
     multiagent-network:
         external: true
