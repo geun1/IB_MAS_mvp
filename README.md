@@ -10,9 +10,6 @@
 -   **Orchestrator**: 사용자 요청 분석 및 작업 조율
 -   **Broker**: 작업 라우팅 및 에이전트 선택
 -   **Agents**: 다양한 기능을 수행하는 에이전트들
-    -   Web Search Agent: 웹에서 정보 검색
-    -   Writer Agent: 문서 작성
-    -   (추가 예정)
 
 ## 시작하기
 
@@ -38,7 +35,6 @@ cp .env.example .env
 -   Registry: http://localhost:8000
 -   Orchestrator: http://localhost:8001
 -   Broker: http://localhost:8002
--   RabbitMQ 관리 UI: http://localhost:15672
 
 ### API 문서 (Swagger UI)
 
@@ -47,8 +43,6 @@ cp .env.example .env
 -   **Registry API 문서**: http://localhost:8000/docs
 -   **Orchestrator API 문서**: http://localhost:8001/docs
 -   **Broker API 문서**: http://localhost:8002/docs
--   **Web Search 에이전트 API 문서**: http://localhost:[PORT]/docs
--   **Writer 에이전트 API 문서**: http://localhost:[PORT]/docs
 
 Swagger UI에서는 다음과 같은 작업이 가능합니다:
 
@@ -58,6 +52,10 @@ Swagger UI에서는 다음과 같은 작업이 가능합니다:
 -   API 모델 스키마 확인
 
 또한 ReDoc 문서도 제공됩니다: http://localhost:[PORT]/redoc
+
+## 시스템 설계 과정, 문서화
+
+https://wax-amber-962.notion.site/infobank-multi-agent-1f075ce94107800aa1d5c572cb48bed1
 
 ## 로드맵
 
